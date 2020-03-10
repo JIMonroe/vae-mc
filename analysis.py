@@ -82,7 +82,7 @@ def plotRecons(model, dat, savePlot=False):
 
   fig.tight_layout()
   if savePlot:
-    zFig.savefig('reconstructions.png')
+    fig.savefig('reconstructions.png')
   plt.show()
 
 
