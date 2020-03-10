@@ -2,7 +2,6 @@
 import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
-
 from libVAE import dataloaders
 
 
@@ -31,7 +30,7 @@ Assumes a factored Gaussian distribution, so returns means and standard deviatio
   return mean, std
 
 
-def plotLatent(model, dat):
+def plotLatent(model, dat, savePlot=False):
   """Plots traversals of all latent dimensions in a model.
   """
   zMean, zStd = getLatentDists(model, dat, doPlot=True)
@@ -55,10 +54,12 @@ def plotLatent(model, dat):
     zAx[-1,j].set_xlabel('z=%1.1f'%zVal)
   zFig.tight_layout()
   zFig.subplots_adjust(wspace=0.0)
+  if savePlot:
+    zFig.savefig('latent_traversals.png')
   plt.show()
 
 
-def plotRecons(model, dat):
+def plotRecons(model, dat, savePlot=False):
   """Plots reconstructions of provided images.
   """
   fig, ax = plt.subplots(len(list(dat)), 2)
@@ -80,6 +81,8 @@ def plotRecons(model, dat):
                         labelright=False, labeltop=False)
 
   fig.tight_layout()
+  if savePlot:
+    zFig.savefig('reconstructions.png')
   plt.show()
 
 
