@@ -58,3 +58,28 @@ def plotLatent(model, dat):
   plt.show()
 
 
+def plotRecons(model, dat):
+  """Plots reconstructions of provided images.
+  """
+  fig, ax = plt.subplots(len(list(dat)), 2)
+  for i, im in enumerate(dat):
+    ax[i,0].imshow(im[:,:,0], cmap='gray_r', vmin=0.0, vmax=1.0)
+    thisrecon = model(tf.cast(tf.reshape(im, (1,64,64,1)), 'float32'))
+    thisrecon = tf.nn.sigmoid(thisrecon).numpy()
+    thisrecon = np.squeeze(thisrecon)
+    randomIm = np.random.random(thisrecon.shape)
+    #thisrecon = np.array((thisrecon > randomIm), dtype=int)
+    ax[i,1].imshow(thisrecon, cmap='gray_r', vmin=0.0, vmax=1.0)
+    ax[i,0].tick_params(axis='both', which='both',
+                        left=False, right=False, bottom=False, top=False,
+                        labelleft=False, labelbottom=False,
+                        labelright=False, labeltop=False)
+    ax[i,1].tick_params(axis='both', which='both',
+                        left=False, right=False, bottom=False, top=False,
+                        labelleft=False, labelbottom=False,
+                        labelright=False, labeltop=False)
+
+  fig.tight_layout()
+  plt.show()
+
+
