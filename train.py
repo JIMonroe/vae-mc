@@ -87,8 +87,9 @@ def train(model,
   #Would still like to provide a wrapper in dataloaders.py
   #Will make more generalizable in case data format changes
   #But, something weird with batching happens if you use keras loss functions
-  trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.1)
+  #trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.1)
   #trainData = dataloaders.raw_image_data(data_file)
+  trainData, valData = dataloaders.dsprites_data(batch_size, val_frac=0.1)
 
   #Set up path for checkpoint files
   checkpoint_path = os.path.join(save_dir, 'training.ckpt')

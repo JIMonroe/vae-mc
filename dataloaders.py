@@ -38,10 +38,14 @@ def dsprites_data(batch_size, val_frac=0.1):
   """
   import tensorflow_datasets as tfds
   valPercent = int(val_frac*100)
-  trainData = tfds.load("dsprites", split="train[:%i]"%(100-valPercent))
+  trainData = tfds.load("dsprites", split="train[:100000]")#split="train[:%%%i]"%(100-valPercent))
+  trainData = tf.data.Dataset.from_tensor_slices([tf.cast(dat['image'], 'float32')
+                                                 for dat in trainData])
   trainData = trainData.shuffle(buffer_size=batch_size).batch(batch_size, drop_remainder=True)
   trainData = tf.data.Dataset.zip((trainData, trainData))
-  valData = tfds.load("dsprites", split="train[-%i:]"%(valPercent))
+  valData = tfds.load("dsprites", split="train[-640:]")#split="train[-%%%i:]"%(valPercent))
+  valData = tf.data.Dataset.from_tensor_slices([tf.cast(dat['image'], 'float32')
+                                                for dat in valData])
   valData = valData.shuffle(buffer_size=batch_size).batch(batch_size, drop_remainder=True)
   valData = tf.data.Dataset.zip((valData, valData))
   return trainData, valData
