@@ -33,7 +33,7 @@ def image_data(datafile, batch_size, val_frac=0.1):
   return trainData, valData
 
 
-def dsprites_data(batch_size, val_frac=0.1, num_images=100000):
+def dsprites_data(batch_size, val_frac=0.01):
   """Loads in the dsprites dataset from tensorflow_datasets.
   """
   import tensorflow_datasets as tfds
@@ -42,11 +42,11 @@ def dsprites_data(batch_size, val_frac=0.1, num_images=100000):
     return tf.cast(adict['image'], 'float32')
 
   valPercent = int(val_frac*100)
-  trainData = tfds.load("dsprites", split="train[:%%%i]"%(100-valPercent))
+  trainData = tfds.load("dsprites", split="train[:%i%%]"%(100-valPercent))
   trainData = trainData.map(imFromDict)
   trainData = trainData.shuffle(buffer_size=batch_size).batch(batch_size, drop_remainder=True)
   trainData = tf.data.Dataset.zip((trainData, trainData))
-  valData = tfds.load("dsprites", split="train[-%%%i:]"%(valPercent))
+  valData = tfds.load("dsprites", split="train[-%i%%:]"%(valPercent))
   valData = valData.map(imFromDict)
   valData = valData.shuffle(buffer_size=batch_size).batch(batch_size, drop_remainder=True)
   valData = tf.data.Dataset.zip((valData, valData))
