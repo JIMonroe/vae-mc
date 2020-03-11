@@ -92,17 +92,14 @@ for val in testTotList:
   z_logvar = tf.zeros(shape=(10000, val))
   print(vae.total_correlation(z, z_mean, z_logvar))
 
-testvae = vae.BaseVAE((64,64,1), 10)
-(testencode) = testvae.encoder(dataones)
-testsample = testvae.sampler(testencode[0], testencode[1])
-testdecode = testvae.decoder(testsample)
-testrecon = testvae(dataones)
-print(testencode)
-print(testsample)
-print(testdecode)
-print(testrecon)
+from libVAE import architectures
 
-#allmodels = [testvae,
+testencoder = architectures.ConvEncoder(10)
+print(testencoder(dataones))
+testdecoder = architectures.DeconvDecoder((64,64,1))
+print(testdecoder(tf.ones((1,10), dtype='float32')))
+
+#allmodels = [vae.BaseVAE((64,64,1), 10),
 #             vae.BetaVAE((64,64,1), 10, beta=384.0), 
 #             vae.DIPVAE((64,64,1), 10),
 #             vae.BetaTCVAE((64,64,1), 10, beta=384.0)]
