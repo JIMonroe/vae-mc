@@ -49,14 +49,20 @@ class FCEncoder(tf.keras.layers.Layer):
       variable log variances.
   """
 
-  def __init__(self, num_latent, name='encoder', **kwargs):
+  def __init__(self, num_latent, name='encoder',
+               kernel_initializer='glorot_uniform', **kwargs):
     super(FCEncoder, self).__init__(name=name, **kwargs)
     self.num_latent = num_latent
+    self.kernel_initializer = kernel_initializer
     self.flattened = tf.keras.layers.Flatten()
-    self.e1 = tf.keras.layers.Dense(1200, activation=tf.nn.relu, name="e1")
-    self.e2 = tf.keras.layers.Dense(1200, activation=tf.nn.relu, name="e2")
-    self.means = tf.keras.layers.Dense(num_latent, activation=None)
-    self.log_var = tf.keras.layers.Dense(num_latent, activation=None)
+    self.e1 = tf.keras.layers.Dense(1200, activation=tf.nn.relu, name="e1",
+                                    kernel_initializer=self.kernel_initializer)
+    self.e2 = tf.keras.layers.Dense(1200, activation=tf.nn.relu, name="e2",
+                                    kernel_initializer=self.kernel_initializer)
+    self.means = tf.keras.layers.Dense(num_latent, activation=None,
+                                       kernel_initializer=self.kernel_initializer)
+    self.log_var = tf.keras.layers.Dense(num_latent, activation=None,
+                                         kernel_initializer=self.kernel_initializer)
 
   def call(self, input_tensor):
     flattened_out = self.flattened(input_tensor)
@@ -86,15 +92,18 @@ class ConvEncoder(tf.keras.layers.Layer):
       variable log variances.
   """
 
-  def __init__(self, num_latent, name='encoder', **kwargs):
+  def __init__(self, num_latent, name='encoder',
+               kernel_initializer='glorot_uniform', **kwargs):
     super(ConvEncoder, self).__init__(name=name, **kwargs)
     self.num_latent = num_latent
+    self.kernel_initializer = kernel_initializer
     self.e1 = tf.keras.layers.Conv2D(filters=32,
                                      kernel_size=4,
                                      strides=2,
                                      activation=tf.nn.relu,
                                      padding="same",
                                      name="e1",
+                                     kernel_initializer=self.kernel_initializer,
                                     )
     self.e2 = tf.keras.layers.Conv2D(filters=32,
                                      kernel_size=4,
@@ -102,6 +111,7 @@ class ConvEncoder(tf.keras.layers.Layer):
                                      activation=tf.nn.relu,
                                      padding="same",
                                      name="e2",
+                                     kernel_initializer=self.kernel_initializer,
                                     )
     self.e3 = tf.keras.layers.Conv2D(filters=64,
                                      kernel_size=2,
@@ -109,6 +119,7 @@ class ConvEncoder(tf.keras.layers.Layer):
                                      activation=tf.nn.relu,
                                      padding="same",
                                      name="e3",
+                                     kernel_initializer=self.kernel_initializer,
                                     )
     self.e4 = tf.keras.layers.Conv2D(filters=64,
                                      kernel_size=2,
@@ -116,11 +127,15 @@ class ConvEncoder(tf.keras.layers.Layer):
                                      activation=tf.nn.relu,
                                      padding="same",
                                      name="e4",
+                                     kernel_initializer=self.kernel_initializer,
                                     )
     self.flat_e4 = tf.keras.layers.Flatten()
-    self.e5 = tf.keras.layers.Dense(256, activation=tf.nn.relu, name="e5")
-    self.means = tf.keras.layers.Dense(num_latent, activation=None, name="means")
-    self.log_var = tf.keras.layers.Dense(num_latent, activation=None, name="log_var")
+    self.e5 = tf.keras.layers.Dense(256, activation=tf.nn.relu, name="e5",
+                                    kernel_initializer=self.kernel_initializer)
+    self.means = tf.keras.layers.Dense(num_latent, activation=None, name="means",
+                                       kernel_initializer=self.kernel_initializer)
+    self.log_var = tf.keras.layers.Dense(num_latent, activation=None, name="log_var",
+                                         kernel_initializer=self.kernel_initializer)
 
   def call(self, input_tensor):
     e1_out = self.e1(input_tensor)
@@ -150,13 +165,19 @@ class FCDecoder(tf.keras.layers.Layer):
     intensities.
   """
 
-  def __init__(self, out_shape, name='decoder', **kwargs):
+  def __init__(self, out_shape, name='decoder',
+               kernel_initializer='glorot_uniform', **kwargs):
     super(FCDecoder, self).__init__(name=name, **kwargs)
     self.out_shape = out_shape
-    self.d1 = tf.keras.layers.Dense(1200, activation=tf.nn.tanh)
-    self.d2 = tf.keras.layers.Dense(1200, activation=tf.nn.tanh)
-    self.d3 = tf.keras.layers.Dense(1200, activation=tf.nn.tanh)
-    self.d4 = tf.keras.layers.Dense(np.prod(out_shape))
+    self.kernel_initializer=kernel_initializer
+    self.d1 = tf.keras.layers.Dense(1200, activation=tf.nn.tanh,
+                                    kernel_initializer=self.kernel_initializer)
+    self.d2 = tf.keras.layers.Dense(1200, activation=tf.nn.tanh,
+                                    kernel_initializer=self.kernel_initializer)
+    self.d3 = tf.keras.layers.Dense(1200, activation=tf.nn.tanh,
+                                    kernel_initializer=self.kernel_initializer)
+    self.d4 = tf.keras.layers.Dense(np.prod(out_shape),
+                                    kernel_initializer=self.kernel_initializer)
 
   def call(self, latent_tensor):
     d1_out = self.d1(latent_tensor)
@@ -182,33 +203,41 @@ class DeconvDecoder(tf.keras.layers.Layer):
       pixel intensities.
   """
 
-  def __init__(self, out_shape, name='decoder', **kwargs):
+  def __init__(self, out_shape, name='decoder', 
+               kernel_initializer='glorot_uniform', **kwargs):
     super(DeconvDecoder, self).__init__(name=name, **kwargs)
     self.out_shape = out_shape
-    self.d1 = tf.keras.layers.Dense(256, activation=tf.nn.relu)
-    self.d2 = tf.keras.layers.Dense(1024, activation=tf.nn.relu)
+    self.kernel_initializer = kernel_initializer
+    self.d1 = tf.keras.layers.Dense(256, activation=tf.nn.relu,
+                                    kernel_initializer=self.kernel_initializer)
+    self.d2 = tf.keras.layers.Dense(1024, activation=tf.nn.relu,
+                                    kernel_initializer=self.kernel_initializer)
     self.d3 = tf.keras.layers.Conv2DTranspose(filters=64,
                                               kernel_size=4,
                                               strides=2,
                                               activation=tf.nn.relu,
                                               padding="same",
+                                              kernel_initializer=self.kernel_initializer,
                                              )
     self.d4 = tf.keras.layers.Conv2DTranspose(filters=32,
                                               kernel_size=4,
                                               strides=2,
                                               activation=tf.nn.relu,
                                               padding="same",
+                                              kernel_initializer=self.kernel_initializer,
                                              )
     self.d5 = tf.keras.layers.Conv2DTranspose(filters=32,
                                               kernel_size=4,
                                               strides=2,
                                               activation=tf.nn.relu,
                                               padding="same",
+                                              kernel_initializer=self.kernel_initializer,
                                              )
     self.d6 = tf.keras.layers.Conv2DTranspose(filters=out_shape[2],
                                               kernel_size=4,
                                               strides=2,
                                               padding="same",
+                                              kernel_initializer=self.kernel_initializer,
                                              )
 
   def call(self, latent_tensor):
