@@ -23,9 +23,9 @@ def compileModel(model):
 
   #Now compile the model so it's ready to train
   model.compile(optimizer,
-                loss=tf.keras.losses.BinaryCrossentropy(from_logits=True,
-                                                reduction=tf.keras.losses.Reduction.SUM),
-                #loss=losses.ReconLoss(),
+                #loss=tf.keras.losses.BinaryCrossentropy(from_logits=True,
+                #                                reduction=tf.keras.losses.Reduction.SUM),
+                loss=losses.ReconLoss(),
                 #loss=losses.TotalVAELoss(model),
                 #metrics=[losses.ReconLossMetric(),
                 #         losses.ElboLossMetric(model),

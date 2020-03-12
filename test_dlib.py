@@ -17,8 +17,8 @@ fakelogvars = tf.math.log(tf.random.uniform((10,10), minval=0.5, maxval=1.0, see
 dataones = tf.ones((1,64,64,1))
 datazeros = tf.zeros((1,64,64,1))
 otherrandom = np.random.random((10,10))
-dataDict = {'real/fake':[datatf, fakedata], 'zeros/zeros':[datazeros, -dataones*100],
-            'ones/zeros':[dataones, -dataones*100], 'ones/ones':[dataones, dataones*100]}
+dataDict = {'real/fake':[datatf, fakedata], 'zeros/zeros':[datazeros, datazeros],
+            'ones/zeros':[dataones, datazeros], 'ones/ones':[dataones, dataones]}
 latentDict = {'fake':[fakemeans, fakelogvars], 'zeros/zeros':[np.zeros([10,10])]*2,
               'ones/zeros':[np.ones([10,10]), np.zeros([10,10])],
               'ones/ones':[np.ones([10,10])]*2}
