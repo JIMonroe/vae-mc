@@ -119,6 +119,9 @@ class ReconLoss(tf.keras.losses.Loss):
     self.recon_loss = reconstruction_loss(loss_fn=loss_fn, activation=activation)
 
   def call(self, true_images, reconstructed_images):
+    #Note that reconstruction_loss returns per_sample loss
+    #But calling ReconLoss will return the reduced mean of the per sample loss
+    #This is the default behavior of the tf.keras.losss.Loss class
     return self.recon_loss(true_images, reconstructed_images)
 
 

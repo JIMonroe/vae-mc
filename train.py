@@ -204,15 +204,16 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
     for step, x_batch_train in enumerate(trainData):
       with tf.GradientTape() as tape:
         reconstructed = model(x_batch_train[0])
-        loss = loss_fn(x_batch_train, reconstructed)
+        loss = loss_fn(x_batch_train[0], reconstructed)
         loss += sum(model.losses)
 
       grads = tape.gradient(loss, model.trainable_weights)
       optimizer.apply_gradients(zip(grads, model.trainable_weights))
 
       if step%100 == 0:
-        print('\tStep %i: loss=%f, kl_div=%f, reg_loss=%f'
-              %(step, loss, model.metrics[0], model.metrics[1]))
+        print('\tStep %i: loss=%f, model_loss=%f, kl_div=%f, reg_loss=%f'
+              %(step, loss, sum(model.losses), 
+                model.metrics[0].result(), model.metrics[1].result()))
 
     #Save checkpoint after each epoch
     print('\tEpoch finished, saving checkpoint.')
