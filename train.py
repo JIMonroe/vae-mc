@@ -23,9 +23,9 @@ def compileModel(model):
 
   #Now compile the model so it's ready to train
   model.compile(optimizer,
-                #loss=tf.keras.losses.BinaryCrossentropy(from_logits=True,
-                #                                reduction=tf.keras.losses.Reduction.SUM),
-                loss=losses.ReconLoss(),
+                loss=tf.keras.losses.BinaryCrossentropy(from_logits=True,
+                                                reduction=tf.keras.losses.Reduction.SUM),
+                #loss=losses.ReconLoss(),
                 #loss=losses.TotalVAELoss(model),
                 #metrics=[losses.ReconLossMetric(),
                 #         losses.ElboLossMetric(model),
@@ -107,17 +107,19 @@ def train(model,
   #Train the model
   train_history = model.fit(trainData,
                             #trainData,
-                            validation_data=valData,
+                            #validation_data=valData,
                             #batch_size=batch_size,
                             epochs=num_epochs,
                             verbose=2,
-                            callbacks=[cp_callback],
+                            #callbacks=[cp_callback],
                             #validation_split=0.10,
-                            shuffle=True,
+                            #shuffle=True,
                            )
 
   print("Training completed at: %s"%time.ctime())
   print(model.summary())
+
+  model.save_weights(checkpoint_path.format(epoch=num_epochs))
 
   #print(train_history.history)
 
@@ -190,9 +192,9 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
                                       )
 
   #Specify the loss function we want to use
-  #loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True,
-  #                                reduction=tf.keras.losses.Reduction.SUM),
-  loss_fn = losses.ReconLoss()
+  loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True,
+                                  reduction=tf.keras.losses.Reduction.SUM)
+  #loss_fn = losses.ReconLoss()
 
   print("Beginning training at: %s"%time.ctime())
 
@@ -202,6 +204,8 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
 
     #Iterate over batches in the dataset
     for step, x_batch_train in enumerate(trainData):
+      for ametric in model.metrics:
+        ametric.reset_states()
       with tf.GradientTape() as tape:
         reconstructed = model(x_batch_train[0])
         loss = loss_fn(x_batch_train[0], reconstructed)
@@ -210,7 +214,7 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
       grads = tape.gradient(loss, model.trainable_weights)
       optimizer.apply_gradients(zip(grads, model.trainable_weights))
 
-      if step%100 == 0:
+      if step%1000 == 0:
         print('\tStep %i: loss=%f, model_loss=%f, kl_div=%f, reg_loss=%f'
               %(step, loss, sum(model.losses), 
                 model.metrics[0].result(), model.metrics[1].result()))
@@ -218,6 +222,17 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
     #Save checkpoint after each epoch
     print('\tEpoch finished, saving checkpoint.')
     model.save_weights(checkpoint_path.format(epoch=epoch))
+
+    #Check against validation data
+    val_loss = tf.constant(0.0)
+    for ametric in model.metrics:
+      ametric.reset_states()
+    for x_batch_val in valData:
+      reconstructed = model(x_batch_val[0])
+      val_loss += loss_fn(x_batch_val[0], reconstructed)
+      val_loss += sum(model.losses)
+    print('\tValidation loss=%f, model_loss=%f, kl_div=%f, reg_loss=%f'
+          %(val_loss, sum(model.losses), model.metrics[0].result(), model.metrics[1].result()))
 
   print("Training completed at: %s"%time.ctime())
   print(model.summary())
@@ -228,6 +243,6 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #This is of limited usefulness due to difficulties saving and loading custom models
   #If can manage not to have any custom losses or metrics, loads just fine!
   #Well, fine except that it may lose the regularizer function
-  model.save(os.path.join(save_dir, 'model'), save_format='tf')
+  #model.save(os.path.join(save_dir, 'model'), save_format='tf')
 
 
