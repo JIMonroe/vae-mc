@@ -9,7 +9,6 @@ def getLatentDists(model, dat, doPlot=False):
   """Determines the distribution of latent variables based on input data.
 Assumes a factored Gaussian distribution, so returns means and standard deviation.
   """
-  #dat = dataloaders.raw_image_data(dataFile)
   zMeans, zLogvars = model.encoder(dat)
   zSample = model.sampler(zMeans, zLogvars).numpy()
 
@@ -27,7 +26,18 @@ Assumes a factored Gaussian distribution, so returns means and standard deviatio
   mean = np.average(zSample, axis=0)
   std = np.std(zSample, ddof=1, axis=0)
 
+  trueMean = tf.reduce_mean(zMeans, axis=0).numpy()
+  trueStd = np.sqrt(tf.reduce_mean(tf.math.exp(zLogvars), axis=0))
+
+  print("Sampled mean versus mean mean:")
+  print(mean)
+  print(trueMean)
+  print("Sampled std versus mean std:")
+  print(std)
+  print(trueStd)
+
   return mean, std
+  #return trueMean, trueStd
 
 
 def plotLatent(model, dat, savePlot=False):
@@ -65,11 +75,11 @@ def plotRecons(model, dat, savePlot=False):
   fig, ax = plt.subplots(len(list(dat)), 2)
   for i, im in enumerate(dat):
     ax[i,0].imshow(im[:,:,0], cmap='gray_r', vmin=0.0, vmax=1.0)
-    thisrecon = model(tf.cast(tf.reshape(im, (1,64,64,1)), 'float32'))
+    thisrecon = model(tf.cast(tf.reshape(im, (1,)+im.shape), 'float32'))
     thisrecon = tf.nn.sigmoid(thisrecon).numpy()
     thisrecon = np.squeeze(thisrecon)
     randomIm = np.random.random(thisrecon.shape)
-    #thisrecon = np.array((thisrecon > randomIm), dtype=int)
+    thisrecon = np.array((thisrecon > randomIm), dtype=int)
     ax[i,1].imshow(thisrecon, cmap='gray_r', vmin=0.0, vmax=1.0)
     ax[i,0].tick_params(axis='both', which='both',
                         left=False, right=False, bottom=False, top=False,
@@ -84,5 +94,31 @@ def plotRecons(model, dat, savePlot=False):
   if savePlot:
     fig.savefig('reconstructions.png')
   plt.show()
+
+
+def genConfigData(model, dat, transformFunc=None, nConfs=1000000):
+  """Generates configurations according to the VAE model. If transformFunc is provided,
+     it applies the function to each generated configuration. Useful for calculating
+     appropriately averaged properties by sampling a VAE model.
+  """
+  #Get latent distribution information and sample in latent space
+  zMean, zStd = getLatentDists(model, dat, doPlot=True)
+  zSamples = model.sampler(tf.tile(np.reshape(zMean, (1,)+zMean.shape), (nConfs,1)),
+                           tf.tile(np.reshape(zStd, (1,)+zStd.shape), (nConfs,1)))
+
+  #Generate actual configurations and apply transform
+  #Even though it's slow, do one at a time to avoid memory issues
+  outDat = []
+  for z in zSamples:
+    confProbs = tf.math.sigmoid(model.decoder(tf.reshape(z, (1,)+z.shape))).numpy()
+    randProbs = np.random.random(size=confProbs.shape)
+    conf = np.array((confProbs > randProbs), dtype='int8')
+    if transformFunc is not None:
+      outDat.append(transformFunc(conf))
+    else:
+      outData.append(conf)
+  outDat = np.array(outDat)
+
+  return outDat
 
 
