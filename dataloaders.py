@@ -8,10 +8,21 @@ from netCDF4 import Dataset
 
 def raw_image_data(datafile):
   """Reads in data in netcdf format and retuns numpy array.
-Really working with lattice gas snapshots, which we can consider images."""
-  dat = Dataset(datafile)
-  images = np.array(dat['config'][:,:,:], dtype='float32')
-  dat.close()
+Really working with lattice gas snapshots, which we can consider images.
+If given a list, will loop over."""
+  if isinstance(datafile, str):
+    dat = Dataset(datafile, 'r')
+    images = np.array(dat['config'][:,:,:], dtype='float32')
+    dat.close()
+  else:
+    images = np.array([])
+    for i, f in enumerate(datafile):
+      dat = Dataset(f, 'r')
+      if i == 0:
+        images = np.array(dat['config'][:,:,:], dtype='float32')
+      else:
+        images = np.vstack((images, np.array(dat['config'][:,:,:], dtype='float32')))
+      dat.close()
   #Most images have 3 dimensions, so to fit with previous VAE code for images, add dimension
   images = np.reshape(images, images.shape+(1,))
   #And want to shuffle data randomly
