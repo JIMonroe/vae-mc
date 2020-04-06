@@ -208,7 +208,7 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
         ametric.reset_states()
       with tf.GradientTape() as tape:
         reconstructed = model(x_batch_train[0])
-        loss = loss_fn(x_batch_train[0], reconstructed)
+        loss = loss_fn(x_batch_train[0], reconstructed) / batch_size
         loss += sum(model.losses)
 
       grads = tape.gradient(loss, model.trainable_weights)

@@ -122,3 +122,24 @@ def genConfigData(model, dat, transformFunc=None, nConfs=1000000):
   return outDat
 
 
+def genReconConfigData(model, dat, transformFunc=None):
+  """Generates reconstructions according to the VAE model. If transformFunc is provided,
+     it applies the function to each generated configuration. Useful for calculating
+     appropriately averaged properties by sampling a VAE model.
+  """
+  reconProbs = tf.math.sigmoid(model(dat)).numpy()
+
+  #For each set of probabilities, generate actual configuration
+  outDat = []
+  for prob in reconProbs:
+    randProbs = np.random.random(size=prob.shape)
+    conf = np.array((prob > randProbs), dtype='int8')
+    if transformFunc is not None:
+      outDat.append(transformFunc(conf))
+    else:
+      outData.append(conf)
+  outDat = np.array(outDat)
+
+  return outDat
+
+
