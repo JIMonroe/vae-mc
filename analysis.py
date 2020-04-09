@@ -5,12 +5,14 @@ import matplotlib.pyplot as plt
 from libVAE import dataloaders
 
 
-def getLatentDists(model, dat, doPlot=False):
+def getLatentDists(model, dat, doPlot=False, dataDraws=1):
   """Determines the distribution of latent variables based on input data.
 Assumes a factored Gaussian distribution, so returns means and standard deviation.
   """
   zMeans, zLogvars = model.encoder(dat)
-  zSample = model.sampler(zMeans, zLogvars).numpy()
+  zSample = np.zeros((dataDraws*dat.shape[0], model.num_latent))
+  for i in range(dataDraws):
+    zSample[i*dat.shape[0]:(i+1)*dat.shape[0],:] = model.sampler(zMeans, zLogvars).numpy()
 
   if doPlot:
     distFig, distAx = plt.subplots()
@@ -27,7 +29,11 @@ Assumes a factored Gaussian distribution, so returns means and standard deviatio
   std = np.std(zSample, ddof=1, axis=0)
 
   trueMean = tf.reduce_mean(zMeans, axis=0).numpy()
-  trueStd = np.sqrt(tf.reduce_mean(tf.math.exp(zLogvars), axis=0))
+  trueStd = np.sqrt(tf.reduce_mean(tf.math.exp(zLogvars)
+                                   + tf.square(zMeans) - tf.square(trueMean), axis=0))
+  #Technically NOT a sum of Gaussianly distributed random variables, but instead a
+  #sum of Gaussian distributions. So mean is average of means, but std is different.
+
 
   print("Sampled mean versus mean mean:")
   print(mean)
@@ -50,7 +56,7 @@ def plotLatent(model, dat, savePlot=False):
     zVec = np.reshape(zMean, (1,-1))
     for j, zVal in enumerate(np.linspace(-2.0, 2.0, 10)):
       zVec[0,i] = zMean[i] + zVal*zStd[i]
-      modelOut = tf.nn.sigmoid(model.decoder(zVec)).numpy()
+      modelOut = tf.nn.sigmoid(model.decoder(tf.cast(zVec, 'float32'))).numpy()
       modelOut = np.squeeze(modelOut)
       randomIm = np.random.random(modelOut.shape)
       imageOut = np.array((modelOut > randomIm), dtype=int)
@@ -103,8 +109,10 @@ def genConfigData(model, dat, transformFunc=None, nConfs=1000000):
   """
   #Get latent distribution information and sample in latent space
   zMean, zStd = getLatentDists(model, dat, doPlot=True)
-  zSamples = model.sampler(tf.tile(np.reshape(zMean, (1,)+zMean.shape), (nConfs,1)),
-                           tf.tile(np.reshape(zStd, (1,)+zStd.shape), (nConfs,1)))
+  zMean = tf.cast(zMean, 'float32')
+  zStd = tf.cast(zStd, 'float32')
+  zSamples = model.sampler(tf.tile(tf.reshape(zMean, (1,)+zMean.shape), (nConfs,1)),
+                           tf.tile(tf.reshape(zStd, (1,)+zStd.shape), (nConfs,1)))
 
   #Generate actual configurations and apply transform
   #Even though it's slow, do one at a time to avoid memory issues
