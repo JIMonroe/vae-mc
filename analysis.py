@@ -42,8 +42,8 @@ Assumes a factored Gaussian distribution, so returns means and standard deviatio
   print(std)
   print(trueStd)
 
-  return mean, std
-  #return trueMean, trueStd
+  #return mean, std
+  return trueMean, trueStd
 
 
 def plotLatent(model, dat, savePlot=False):
