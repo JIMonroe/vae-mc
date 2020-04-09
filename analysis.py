@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from libVAE import dataloaders
 
 
-def getLatentDists(model, dat, doPlot=False, dataDraws=1):
+def getLatentDists(model, dat, doPlot=False, dataDraws=1, returnSample=False):
   """Determines the distribution of latent variables based on input data.
 Assumes a factored Gaussian distribution, so returns means and standard deviation.
   """
@@ -42,20 +42,24 @@ Assumes a factored Gaussian distribution, so returns means and standard deviatio
   print(std)
   print(trueStd)
 
-  #return mean, std
-  return trueMean, trueStd
+  if returnSample:
+    return trueMean, trueStd, zSample
+  else:
+    #return mean, std
+    return trueMean, trueStd
 
 
 def plotLatent(model, dat, savePlot=False):
   """Plots traversals of all latent dimensions in a model.
   """
-  zMean, zStd = getLatentDists(model, dat, doPlot=True)
+  zMean, zStd, zSample = getLatentDists(model, dat, doPlot=True, returnSample=True)
+  zPercentiles = np.percentile(zSample, np.linspace(5, 95, 10), axis=0)
 
   zFig, zAx = plt.subplots(model.num_latent, 10, sharex=True, sharey=True, figsize=(9.5,10))
   for i in range(model.num_latent):
     zVec = np.reshape(zMean, (1,-1))
-    for j, zVal in enumerate(np.linspace(-2.0, 2.0, 10)):
-      zVec[0,i] = zMean[i] + zVal*zStd[i]
+    for j, zVal in enumerate(zPercentiles[:,i]): #Percentiles instead of std
+      zVec[0,i] = zVal
       modelOut = tf.nn.sigmoid(model.decoder(tf.cast(zVec, 'float32'))).numpy()
       modelOut = np.squeeze(modelOut)
       randomIm = np.random.random(modelOut.shape)
@@ -66,8 +70,8 @@ def plotLatent(model, dat, savePlot=False):
                            labelleft=False, labelbottom=False,
                            labelright=False, labeltop=False)
     zAx[i,0].set_ylabel('%i'%(i+1))
-  for j, zVal in enumerate(np.linspace(-2.0, 2.0, 10)):
-    zAx[-1,j].set_xlabel('z=%1.1f'%zVal)
+  for j, zVal in enumerate(np.linspace(5, 95, 10)):
+    zAx[-1,j].set_xlabel('%2.0f%%'%zVal)
   zFig.tight_layout()
   zFig.subplots_adjust(wspace=0.0)
   if savePlot:
