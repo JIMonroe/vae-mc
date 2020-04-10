@@ -30,13 +30,13 @@ If given a list, will loop over."""
   return images
 
 
-def image_data(datafile, batch_size, val_frac=0.1):
+def image_data(datafile, batch_size, val_frac=0.1, num_epochs=10):
   """Takes raw data as numpy array and converts to training and validation tensorflow datasets."""
   rawData = raw_image_data(datafile)
   #Save some fraction of data for validation
   valInd = int((1.0-val_frac)*rawData.shape[0])
   trainData = tf.data.Dataset.from_tensor_slices(rawData[:valInd])
-  trainData = trainData.repeat().shuffle(buffer_size=2*batch_size).batch(batch_size, drop_remainder=True)
+  trainData = trainData.repeat(num_epochs).shuffle(buffer_size=2*batch_size).batch(batch_size, drop_remainder=True)
   trainData = tf.data.Dataset.zip((trainData, trainData))
   valData = tf.data.Dataset.from_tensor_slices(rawData[valInd:])
   valData = valData.batch(batch_size, drop_remainder=True)
