@@ -177,7 +177,8 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #Would still like to provide a wrapper in dataloaders.py
   #Will make more generalizable in case data format changes
   #But, something weird with batching happens if you use keras loss functions
-  trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.1)
+  trainData, valData = dataloaders.image_data(data_file, batch_size,
+                                              val_frac=0.05, num_epochs=num_epochs)
   #trainData = dataloaders.raw_image_data(data_file)
   #trainData, valData = dataloaders.dsprites_data(batch_size, val_frac=0.01)
 
