@@ -209,7 +209,7 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
         ametric.reset_states()
       with tf.GradientTape() as tape:
         reconstructed = model(x_batch_train[0])
-        loss = loss_fn(x_batch_train[0], reconstructed) / batch_size
+        loss = loss_fn(x_batch_train[0], reconstructed) / x_batch_train.shape[0]
         loss += sum(model.losses)
 
       grads = tape.gradient(loss, model.trainable_weights)
@@ -231,7 +231,7 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
     batchCount = 0.0
     for x_batch_val in valData:
       reconstructed = model(x_batch_val[0])
-      val_loss += loss_fn(x_batch_val[0], reconstructed) / batch_size
+      val_loss += loss_fn(x_batch_val[0], reconstructed) / x_batch_val.shape[0]
       val_loss += sum(model.losses)
       batchCount += 1.0
     val_loss /= batchCount
