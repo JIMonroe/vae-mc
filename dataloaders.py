@@ -36,10 +36,10 @@ def image_data(datafile, batch_size, val_frac=0.1):
   #Save some fraction of data for validation
   valInd = int((1.0-val_frac)*rawData.shape[0])
   trainData = tf.data.Dataset.from_tensor_slices(rawData[:valInd])
-  trainData = trainData.shuffle(buffer_size=batch_size).batch(batch_size, drop_remainder=True)
+  trainData = trainData.repeat().shuffle(buffer_size=2*batch_size).batch(batch_size, drop_remainder=True)
   trainData = tf.data.Dataset.zip((trainData, trainData))
   valData = tf.data.Dataset.from_tensor_slices(rawData[valInd:])
-  valData = valData.shuffle(buffer_size=batch_size).batch(batch_size, drop_remainder=True)
+  valData = valData.batch(batch_size, drop_remainder=True)
   valData = tf.data.Dataset.zip((valData, valData))
   return trainData, valData
 
@@ -59,7 +59,7 @@ def dsprites_data(batch_size, val_frac=0.01):
   trainData = tf.data.Dataset.zip((trainData, trainData))
   valData = tfds.load("dsprites", split="train[-%i%%:]"%(valPercent))
   valData = valData.map(imFromDict)
-  valData = valData.shuffle(buffer_size=batch_size).batch(batch_size, drop_remainder=True)
+  valData = valData.batch(batch_size, drop_remainder=True)
   valData = tf.data.Dataset.zip((valData, valData))
   return trainData, valData
 
