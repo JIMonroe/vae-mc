@@ -227,10 +227,13 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
     val_loss = tf.constant(0.0)
     for ametric in model.metrics:
       ametric.reset_states()
+    batchCount = 0.0
     for x_batch_val in valData:
       reconstructed = model(x_batch_val[0])
-      val_loss += loss_fn(x_batch_val[0], reconstructed)
+      val_loss += loss_fn(x_batch_val[0], reconstructed) / batch_size
       val_loss += sum(model.losses)
+      batchCount += 1.0
+    val_loss /= batchCount
     print('\tValidation loss=%f, model_loss=%f, kl_div=%f, reg_loss=%f'
           %(val_loss, sum(model.losses), model.metrics[0].result(), model.metrics[1].result()))
 
