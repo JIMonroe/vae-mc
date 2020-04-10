@@ -177,8 +177,7 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #Would still like to provide a wrapper in dataloaders.py
   #Will make more generalizable in case data format changes
   #But, something weird with batching happens if you use keras loss functions
-  trainData, valData = dataloaders.image_data(data_file, batch_size,
-                                              val_frac=0.05, num_epochs=num_epochs)
+  trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
   #trainData = dataloaders.raw_image_data(data_file)
   #trainData, valData = dataloaders.dsprites_data(batch_size, val_frac=0.01)
 
@@ -209,13 +208,13 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
         ametric.reset_states()
       with tf.GradientTape() as tape:
         reconstructed = model(x_batch_train[0])
-        loss = loss_fn(x_batch_train[0], reconstructed) / x_batch_train.shape[0]
+        loss = loss_fn(x_batch_train[0], reconstructed) / x_batch_train[0].shape[0]
         loss += sum(model.losses)
 
       grads = tape.gradient(loss, model.trainable_weights)
       optimizer.apply_gradients(zip(grads, model.trainable_weights))
 
-      if step%1000 == 0:
+      if step%100 == 0:
         print('\tStep %i: loss=%f, model_loss=%f, kl_div=%f, reg_loss=%f'
               %(step, loss, sum(model.losses), 
                 model.metrics[0].result(), model.metrics[1].result()))
@@ -231,7 +230,7 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
     batchCount = 0.0
     for x_batch_val in valData:
       reconstructed = model(x_batch_val[0])
-      val_loss += loss_fn(x_batch_val[0], reconstructed) / x_batch_val.shape[0]
+      val_loss += loss_fn(x_batch_val[0], reconstructed) / x_batch_val[0].shape[0]
       val_loss += sum(model.losses)
       batchCount += 1.0
     val_loss /= batchCount
