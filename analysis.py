@@ -54,10 +54,13 @@ def plotLatent(model, dat, savePlot=False):
   """
   zMean, zStd, zSample = getLatentDists(model, dat, doPlot=True, returnSample=True)
   zPercentiles = np.percentile(zSample, np.linspace(5, 95, 10), axis=0)
+  zPercentiles = np.vstack((zPercentiles[:5,:],
+                            np.reshape(zMean, (1,-1)),
+                            zPercentiles[5:,:]))
 
-  zFig, zAx = plt.subplots(model.num_latent, 10, sharex=True, sharey=True, figsize=(9.5,10))
+  zFig, zAx = plt.subplots(model.num_latent, 11, sharex=True, sharey=True, figsize=(10,10))
   for i in range(model.num_latent):
-    zVec = np.reshape(zMean, (1,-1))
+    zVec = np.reshape(zMean.copy(), (1,-1))
     for j, zVal in enumerate(zPercentiles[:,i]): #Percentiles instead of std
       zVec[0,i] = zVal
       modelOut = tf.nn.sigmoid(model.decoder(tf.cast(zVec, 'float32'))).numpy()
@@ -70,8 +73,11 @@ def plotLatent(model, dat, savePlot=False):
                            labelleft=False, labelbottom=False,
                            labelright=False, labeltop=False)
     zAx[i,0].set_ylabel('%i'%(i+1))
-  for j, zVal in enumerate(np.linspace(5, 95, 10)):
+  for j, zVal in enumerate(np.linspace(5, 45, 5)):
     zAx[-1,j].set_xlabel('%2.0f%%'%zVal)
+  zAx[-1,5].set_xlabel('mean')
+  for j, zVal in enumerate(np.linspace(55, 95, 5)):
+    zAx[-1,6+j].set_xlabel('%2.0f%%'%zVal)
   zFig.tight_layout()
   zFig.subplots_adjust(wspace=0.0)
   if savePlot:
@@ -139,17 +145,18 @@ def genReconConfigData(model, dat, transformFunc=None):
      it applies the function to each generated configuration. Useful for calculating
      appropriately averaged properties by sampling a VAE model.
   """
-  reconProbs = tf.math.sigmoid(model(dat)).numpy()
-
+  #To avoid memory issues, must do each configuration one at a time
   #For each set of probabilities, generate actual configuration
   outDat = []
-  for prob in reconProbs:
-    randProbs = np.random.random(size=prob.shape)
-    conf = np.array((prob > randProbs), dtype='int8')
+  for conf in dat:
+    reconProbs = tf.math.sigmoid(model(np.reshape(conf, (1,)+conf.shape))).numpy()
+    reconProbs = np.squeeze(reconProbs)
+    randProbs = np.random.random(size=reconProbs.shape)
+    recon = np.array((reconProbs > randProbs), dtype='int8')
     if transformFunc is not None:
-      outDat.append(transformFunc(conf))
+      outDat.append(transformFunc(recon))
     else:
-      outData.append(conf)
+      outData.append(recon)
   outDat = np.array(outDat)
 
   return outDat
