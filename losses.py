@@ -98,6 +98,7 @@ def compute_gaussian_kl(z_mean, z_logvar):
 def reconstruction_loss(loss_fn=bernoulli_loss,
                         activation="logits"):
   """Wrapper that creates reconstruction loss."""
+
   #Will actually return a function that takes two inputs, the true and reconstructed images
   #But the function can be customized by specifying different loss_fn and activation
   def calc_loss(true_images, reconstructed_images):
@@ -107,23 +108,41 @@ def reconstruction_loss(loss_fn=bernoulli_loss,
   return calc_loss
 
 
-def transform_MSE_loss(transform_fn=tf.reduce_sum, func_params={'axis':(1,2)}):
+def latticeGasHamiltonian(conf, mu, eps):
+  """Computes the Hamiltonian for a 2D lattice gas given an image - so if the
+image is 1's and 0's it makes sense. Really should be any number of images. If
+just have one, add a first dimension to it.
+  """
+  tfconf = tf.cast(conf, 'float32')
+  #Shift all indices by 1 in up and down then left and right and multiply by original
+  ud = eps*tf.reduce_sum(tfconf*tf.roll(tfconf, 1, axis=1), axis=(1,2,3))
+  lr = eps*tf.reduce_sum(tfconf*tf.roll(tfconf, 1, axis=2), axis=(1,2,3))
+  #Next incorporate chemical potential term
+  H = ud + lr - mu*tf.reduce_sum(tfconf, axis=(1,2,3))
+  return H
+
+
+def transform_MSE_loss(transform_fn=latticeGasHamiltonian,
+                       func_params=[-2.0, -1.0],
+                       activation=None):
   """Wrapper to create a loss function returning the MSE between transformations of
 configurations. Useful for adding on loss for potential energies, etc. The passed
 function must compute the transform for each sample (i.e. doesn't combine along
-the first axis). Or at least it would be useful for potential energies except that
-tensorflow may not be able to compute gradients."""
-  def calc_loss(true_images, reconstructed_images):
+the first axis)."""
+
+  def calc_loss(true_images, recon_images):
+    if activation is "logits":
+      recon_images = tf.math.sigmoid(recon_images)
     if isinstance(func_params, dict):
       true_transform = transform_fn(true_images, **func_params)
-      recon_transform = transform_fn(reconstructed_images, **func_params)
+      recon_transform = transform_fn(recon_images, **func_params)
     else:
       true_transform = transform_fn(true_images, *func_params)
-      recon_transform = transform_fn(reconstructed_images, *func_params)
+      recon_transform = transform_fn(recon_images, *func_params)
     return tf.keras.losses.mse(true_transform, recon_transform)
 
   return calc_loss
- 
+
 
 class ReconLoss(tf.keras.losses.Loss):
   """Computes just the reconstruction loss."""
