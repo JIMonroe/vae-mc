@@ -98,7 +98,6 @@ def compute_gaussian_kl(z_mean, z_logvar):
 def reconstruction_loss(loss_fn=bernoulli_loss,
                         activation="logits"):
   """Wrapper that creates reconstruction loss."""
-
   #Will actually return a function that takes two inputs, the true and reconstructed images
   #But the function can be customized by specifying different loss_fn and activation
   def calc_loss(true_images, reconstructed_images):
@@ -107,6 +106,24 @@ def reconstruction_loss(loss_fn=bernoulli_loss,
 
   return calc_loss
 
+
+def transform_MSE_loss(transform_fn=tf.reduce_sum, func_params={'axis':(1,2)}):
+  """Wrapper to create a loss function returning the MSE between transformations of
+configurations. Useful for adding on loss for potential energies, etc. The passed
+function must compute the transform for each sample (i.e. doesn't combine along
+the first axis). Or at least it would be useful for potential energies except that
+tensorflow may not be able to compute gradients."""
+  def calc_loss(true_images, reconstructed_images):
+    if isinstance(func_params, dict):
+      true_transform = transform_fn(true_images, **func_params)
+      recon_transform = transform_fn(reconstructed_images, **func_params)
+    else:
+      true_transform = transform_fn(true_images, *func_params)
+      recon_transform = transform_fn(reconstructed_images, *func_params)
+    return tf.keras.losses.mse(true_transform, recon_transform)
+
+  return calc_loss
+ 
 
 class ReconLoss(tf.keras.losses.Loss):
   """Computes just the reconstruction loss."""

@@ -135,7 +135,8 @@ def trainCustom(model,
                 num_epochs=2,
                 batch_size=64,
                 save_dir='vae_info',
-                overwrite=False):
+                overwrite=False,
+                extraLossFunc=None):
   """Trains a VAE model and saves the results in a way that the model can be fully reloaded.
 Uses a custom training loop rather than those built into the tf.keras.Model class.
 
@@ -146,6 +147,7 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
     batch_size: Integer with the batch size
     save_dir: String with path to directory to save to
     overwrite: Boolean determining whether data is overwritten
+    extraLossFunc: Additional loss function to add (for example potential energies)
   """
 
   #Check if the directory exists
@@ -210,14 +212,19 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
         reconstructed = model(x_batch_train[0])
         loss = loss_fn(x_batch_train[0], reconstructed) / x_batch_train[0].shape[0]
         loss += sum(model.losses)
+        if extraLossFunc is not None:
+          extra_loss = tf.cast(extraLossFunc(x_batch_train[0], reconstructed), 'float32')
+          loss += extra_loss
+        else:
+          extra_loss = 0.0
 
       grads = tape.gradient(loss, model.trainable_weights)
       optimizer.apply_gradients(zip(grads, model.trainable_weights))
 
       if step%100 == 0:
-        print('\tStep %i: loss=%f, model_loss=%f, kl_div=%f, reg_loss=%f'
+        print('\tStep %i: loss=%f, model_loss=%f, kl_div=%f, reg_loss=%f, extra_loss=%f'
               %(step, loss, sum(model.losses), 
-                model.metrics[0].result(), model.metrics[1].result()))
+                model.metrics[0].result(), model.metrics[1].result(), extra_loss))
 
     #Save checkpoint after each epoch
     print('\tEpoch finished, saving checkpoint.')
@@ -225,6 +232,7 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
 
     #Check against validation data
     val_loss = tf.constant(0.0)
+    val_extra_loss = tf.constant(0.0)
     for ametric in model.metrics:
       ametric.reset_states()
     batchCount = 0.0
@@ -232,10 +240,16 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
       reconstructed = model(x_batch_val[0])
       val_loss += loss_fn(x_batch_val[0], reconstructed) / x_batch_val[0].shape[0]
       val_loss += sum(model.losses)
+      if extraLossFunc is not None:
+        extra_loss = tf.cast(extraLossFunc(x_batch_val[0], reconstructed), 'float32')
+        val_loss += extra_loss
+        val_extra_loss += extra_loss
       batchCount += 1.0
     val_loss /= batchCount
-    print('\tValidation loss=%f, model_loss=%f, kl_div=%f, reg_loss=%f'
-          %(val_loss, sum(model.losses), model.metrics[0].result(), model.metrics[1].result()))
+    val_extra_loss /= batchCount
+    print('\tValidation loss=%f, model_loss=%f, kl_div=%f, reg_loss=%f, extra_loss=%f'
+          %(val_loss, sum(model.losses), 
+            model.metrics[0].result(), model.metrics[1].result(), val_extra_loss))
 
   print("Training completed at: %s"%time.ctime())
   print(model.summary())
