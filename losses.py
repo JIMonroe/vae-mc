@@ -124,7 +124,8 @@ just have one, add a first dimension to it.
 
 def transform_MSE_loss(transform_fn=latticeGasHamiltonian,
                        func_params=[-2.0, -1.0],
-                       activation=None):
+                       activation=None,
+                       weightFactor=1.0):
   """Wrapper to create a loss function returning the MSE between transformations of
 configurations. Useful for adding on loss for potential energies, etc. The passed
 function must compute the transform for each sample (i.e. doesn't combine along
@@ -139,7 +140,7 @@ the first axis)."""
     else:
       true_transform = transform_fn(true_images, *func_params)
       recon_transform = transform_fn(recon_images, *func_params)
-    return tf.keras.losses.mse(true_transform, recon_transform)
+    return weightFactor*tf.keras.losses.mse(true_transform, recon_transform)
 
   return calc_loss
 
