@@ -26,15 +26,20 @@ import tensorflow as tf
 class BaseVAE(tf.keras.Model):
   """Abstract base class of a basic VAE."""
 
-  def __init__(self, data_shape, num_latent, name='vae', **kwargs):
+  def __init__(self, data_shape, num_latent, name='vae', arch='fc', **kwargs):
     super(BaseVAE, self).__init__(name=name, **kwargs)
     self.data_shape = data_shape
     self.num_latent = num_latent
-    #self.encoder = architectures.ConvEncoder(num_latent)
-    self.encoder = architectures.FCEncoder(num_latent)
+    #By default, use fully-connect (fc) architecture for neural nets
+    #Can switch to convolutional if specify arch='conv'
+    self.arch = arch
+    if self.arch == 'conv':
+      self.encoder = architectures.ConvEncoder(num_latent)
+      self.decoder = architectures.DeconvDecoder(data_shape)
+    else:
+      self.encoder = architectures.FCEncoder(num_latent)
+      self.decoder = architectures.FCDecoder(data_shape)
     self.sampler = architectures.SampleLatent()
-    #self.decoder = architectures.DeconvDecoder(data_shape)
-    self.decoder = architectures.FCDecoder(data_shape)
 
   def regularizer(self, kl_loss, z_mean, z_logvar, z_sampled):
     del z_mean, z_logvar, z_sampled
