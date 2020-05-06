@@ -17,9 +17,14 @@ Assumes a factored Gaussian distribution, so returns means and standard deviatio
   if doPlot:
     distFig, distAx = plt.subplots()
     for i in range(model.num_latent):
-      thisHist, thisBins = np.histogram(zSample[:,i], bins='auto')
+      thisHist, thisBins = np.histogram(zSample[:,i], bins='auto', density=True)
       thisCents = 0.5*(thisBins[:-1] + thisBins[1:])
       distAx.plot(thisCents, thisHist, label='%i'%(i+1))
+    #And also plot a standard normal distribution
+    #This is what the z distribution should be if well trained
+    plotZs = np.arange(np.min(zSample), np.max(zSample), 0.001)
+    plotVals = (1.0/np.sqrt(2.0*np.pi))*np.exp(-0.5*(plotZs**2))
+    distAx.plot(plotZs, plotVals, 'k--', label='Ref')
     distAx.set_xlabel('Latent variable value')
     distAx.set_ylabel('Histogram counts')
     distAx.legend()
@@ -33,7 +38,6 @@ Assumes a factored Gaussian distribution, so returns means and standard deviatio
                                    + tf.square(zMeans) - tf.square(trueMean), axis=0))
   #Technically NOT a sum of Gaussianly distributed random variables, but instead a
   #sum of Gaussian distributions. So mean is average of means, but std is different.
-
 
   print("Sampled mean versus mean mean:")
   print(mean)
