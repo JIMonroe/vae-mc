@@ -270,7 +270,7 @@ def trainGenerator(model,
                    overwrite=False,
                    beta=2.0,
                    mu=-2.0,
-                   eps=-1.0)
+                   eps=-1.0):
   """Trains only the decoder/generator portion of a VAE model to reproduce relative
 Boltzmann weights (specific to the loss function used) starting from standard normal
 distributions of latent variables.
@@ -324,9 +324,25 @@ distributions of latent variables.
   #Loop over epochs
   for epoch in range(num_epochs):
 
-    #Compute loss (includes generating sample)
+    #First step is to generate z sample from the VAE model
+    #If the model is well-trained, the model distribution of z should be standard normal
+    z_sample = tf.random.normal((batch_size, model.num_latent))
+
+    #Obtain probabilities of x given z
+    #To avoid calculating twice, do with gradient tape on
+    #with tf.GradientTape() as tape:
+    x_logits = model.decoder(z_sample)
+    x_probs = tf.math.sigmoid(x_logits)
+ 
+    #Generate x samples from probabilities given z samples
+    rand_probs = tf.random.uniform(x_probs.shape)
+    x_sample = tf.cast((x_probs > rand_probs), 'float32')
+
+    #Compute loss based on generated sample
     with tf.GradientTape() as tape:
-      loss = losses.relative_boltzmann_loss(model,
+      x_logits = model.decoder(z_sample)
+      x_probs = tf.math.sigmoid(x_logits)
+      loss = losses.relative_boltzmann_loss(x_sample, x_probs,
                                             beta=beta, func_params=[mu, eps],
                                             n_samples=batch_size)
 
