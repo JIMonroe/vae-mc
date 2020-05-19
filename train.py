@@ -263,3 +263,84 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #model.save(os.path.join(save_dir, 'model'), save_format='tf')
 
 
+def trainGenerator(model,
+                   num_epochs=10000,
+                   batch_size=1000,
+                   save_dir='vae_info',
+                   overwrite=False,
+                   beta=2.0,
+                   mu=-2.0,
+                   eps=-1.0)
+  """Trains only the decoder/generator portion of a VAE model to reproduce relative
+Boltzmann weights (specific to the loss function used) starting from standard normal
+distributions of latent variables.
+
+  Args:
+    model: the VAE model object to train and save
+    num_epochs: Integer with number of epochs to train (here training steps)
+    batch_size: Integer with number of samples to generate and use per training step
+    save_dir: String with path to directory to save to
+    overwrite: Boolean determining whether data is overwritten
+    beta: inverse temperature of ensemble to train towards
+    mu: chemical potential of lattice gas
+    eps: interaction energy of lattice gas
+  """
+
+  #Check if the directory exists
+  #If so, assume continuation and load model weights
+  if os.path.isdir(save_dir):
+    #If overwrite is True, don't need to do anything
+    #If it's False, create a new directory to save to
+    if not overwrite:
+      print("Found saved model at %s and overwrite is False."%save_dir)
+      print("Will attempt to load and continue training.")
+      model.load_weights(os.path.join(save_dir, 'training.ckpt'))
+      #print(model.summary())
+      try:
+        dir_split = save_dir.split('_')
+        train_num = int(dir_split[-1])
+        save_dir = '%s_%i'%("_".join(dir_split[:-1]), train_num+1)
+      except ValueError:
+        save_dir = '%s_1'%(save_dir)
+      os.mkdir(save_dir)
+  #If not, create that directory to save to later
+  else:
+    os.mkdir(save_dir)
+
+  print("Model set up and ready to train in terms of generation.")
+
+  #Set up path for checkpoint files
+  checkpoint_path = os.path.join(save_dir, 'training.ckpt')
+
+  #Create an optimizer to use based on hyperparameters in https://github.com/google-research/disentanglement_lib 
+  optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001,
+                                       beta_1=0.9,
+                                       beta_2=0.999,
+                                       epsilon=1e-08,
+                                      )
+
+  print("Beginning training at: %s"%time.ctime())
+
+  #Loop over epochs
+  for epoch in range(num_epochs):
+
+    #Compute loss (includes generating sample)
+    with tf.GradientTape() as tape:
+      loss = losses.relative_boltzmann_loss(model,
+                                            beta=beta, func_params=[mu, eps],
+                                            n_samples=batch_size)
+
+    grads = tape.gradient(loss, model.trainable_weights)
+    optimizer.apply_gradients(zip(grads, model.trainable_weights))
+
+    if epoch%1000 == 0:
+      print('\nStep %i: loss=%f'%(epoch, loss))
+      #Save checkpoint after each epoch
+      print('\tSaving checkpoint.')
+      model.save_weights(checkpoint_path.format(epoch=epoch))
+
+  print("Training completed at: %s"%time.ctime())
+  model.save_weights(checkpoint_path.format(epoch=num_epochs-1))
+  print(model.summary())
+
+
