@@ -145,6 +145,46 @@ the first axis)."""
   return calc_loss
 
 
+def relative_boltzmann_loss(vae_model,
+                            energy_func=latticeGasHamiltonian,
+                            func_params=[-2.0, -1.0],
+                            beta=1.0,
+                            n_samples=1000):
+  """Loss function that computes the MSE between relative probability weights predicted
+by a vae_model and those known to occur for a Boltzmann distribution. In other words, the
+relative Boltzmann log weights are the reduced potential differences and the relative log
+weights under the model are the differences between the log of the expectation of P(x|z)
+over z. A vae_model must be provided so that we can compute P(x|z). No examples are
+necessary to train this objective function as the relative Boltzmann weights are known
+a priori.
+  """
+
+  #First step is to generate z sample from the vaeModel
+  #If the model is well-trained, the model distribution of z should be standard normal
+  z_sample = tf.random.normal((n_samples, vae_model.num_latent))
+
+  #Generated x from each z
+  x_logits = vae_model.decoder(z_sample)
+  x_probs = tf.math.sigmoid(x_logits)
+  rand_probs = tf.random.uniform(x_probs.shape)
+  x_sample = tf.cast((x_probs > rand_probs), 'float32')
+
+  #Get all potential energies now (before fancy reshaping, etc.)
+  u_pot = energy_func(x_sample, *func_params)
+
+  #Can use broadcasting trick to do everything in one shot, no loop (at least not in python)
+  #Requires more memory - specifically multiplies size of x_sample by n_samples
+  x_sample = tf.reshape(x_sample, (x_sample.shape[0],1)+x_sample.shape[1:])
+  log_pxz = tf.reduce_sum(x_sample*tf.math.log(x_probs)
+                          + (1.0 - x_sample)*tf.math.log(1.0 - x_probs), axis=(2,3,4))
+  log_avg_pxz = tf.reduce_logsumexp(log_pxz - tf.math.log(float(n_samples)), axis=(1))
+
+  #And compute loss using first configuration as reference
+  loss = tf.reduce_mean(tf.math.square(log_avg_pxz[1:] - log_avg_pxz[0]
+                                       + beta*(u_pot[1:] - u_pot[0])))
+  return loss
+
+
 class ReconLoss(tf.keras.losses.Loss):
   """Computes just the reconstruction loss."""
 
