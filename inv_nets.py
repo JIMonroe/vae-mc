@@ -5,7 +5,7 @@ import time
 import tensorflow as tf
 import numpy as np
 
-from libVAE import losses
+from libVAE import losses, dataloaders
 
 
 class TransformNet(tf.keras.layers.Layer):
@@ -180,7 +180,10 @@ class InvNet(tf.keras.Model):
       #Before doing anything else, apply inverse activation
       if self.activation == 'logits':
         #Implement inverse of sigmoid, or logistic function
-        act_out = tf.math.log(inputs / (1.0 - inputs))
+        #But do carefully to avoid inf or -inf
+        #clip_out = tf.where((inputs==1.0), 1.0-1e-07, 1e-07)
+        clip_out = tf.clip_by_value(inputs, 1e-07, 1.0-1e-07)
+        act_out = tf.math.log(clip_out / (1.0 - clip_out))
       elif self.activation is None:
         act_out = inputs
       #First we flatten and split (after activation)
@@ -294,5 +297,95 @@ def trainFromLatent(model,
   print("Training completed at: %s"%time.ctime())
   model.save_weights(checkpoint_path.format(epoch=num_steps-1))
   print(model.summary())
+
+
+def trainFromExample(model,
+                     data_file,
+                     num_epochs=2,
+                     batch_size=64,
+                     save_dir='inv_info',
+                     overwrite=False):
+  """Trains an invertible model by examples provided in data_file.
+  """
+
+  #Set up checkpointing and saving - load previous model parameters if we can
+  if os.path.isdir(save_dir):
+    #If overwrite is True, don't need to do anything
+    #If it's False, create a new directory to save to
+    if not overwrite:
+      print("Found saved model at %s and overwrite is False."%save_dir)
+      print("Will attempt to load and continue training.")
+      model.load_weights(os.path.join(save__dir, 'training.ckpt'))
+      try:
+        dir_split = save_dir.split('_')
+        train_num = int(dir_split[-1])
+        save_dir = '%s_%i'%("_".join(dir_split[:-1]), train_num+1)
+      except ValueError:
+        save_dir = '%s_1'%(save_dir)
+      os.mkdir(save_dir)
+  #If not, create that directory to save to later
+  else:
+    os.mkdir(save_dir)
+
+  print("Model set up and ready to train.")
+
+  checkpoint_path = os.path.join(save_dir, 'training.ckpt')
+
+  #Load in data
+  trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
+
+  #Set up optimizer
+  optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001,
+                                       beta_1=0.9,
+                                       beta_2=0.999,
+                                       epsilon=1e-08,
+                                      )
+
+  print("Beginning training at: %s"%time.ctime())
+
+  #Will loop over epochs 
+  for epoch in range(num_epochs):
+    print('\nOn epoch %d:'%epoch)
+
+    #Iterate over batches in the dataset
+    for step, x_batch_train in enumerate(trainData):
+      #Need to do all of the next bit within gradient_tape
+      with tf.GradientTape() as tape:
+        #Convert real space to latent space representation
+        #Sticking to standard normal distributions in latent space
+        z_configs = model(x_batch_train[0])
+        #Calculate the log probabilities in latent space given standard normal distribution
+        log_probs = tf.reduce_sum(tf.square(z_configs), axis=tf.range(1, len(z_configs.shape)))
+        #And calculate total loss
+        loss_probs = tf.reduce_mean(log_probs)
+        loss_jacobian = tf.reduce_mean(model.log_det_for_sum)
+        loss = loss_probs - loss_jacobian
+
+      grads = tape.gradient(loss, model.trainable_weights)
+      optimizer.apply_gradients(zip(grads, model.trainable_weights))
+
+      if step%100 == 0:
+        print('\tStep %i: loss=%f, log_probs=%f, logRxz=%f'%(step, loss,
+                                                             loss_probs, loss_jacobian))
+
+    #Save checkpoint
+    print('\tEpoch finished, saving checkpoint.')
+    model.save_weights(checkpoint_path.format(epoch=epoch))
+
+    #Check against validation data
+    val_loss = tf.constant(0.0)
+    batchCount = 0.0
+    for x_batch_val in valData:
+      z_configs = model(x_batch_val[0])
+      log_probs = tf.reduce_sum(tf.square(z_configs), axis=tf.range(1, len(z_configs.shape)))
+      val_loss += tf.reduce_mean(log_probs - model.log_det_for_sum)
+      batchCount += 1.0
+    val_loss /= batchCount
+    print('\tValidation loss=%f'%(val_loss))
+
+  print("Training completed at: %s"%time.ctime())
+  print(model.summary())
+
+
 
 
