@@ -66,24 +66,26 @@ class SplitLayer(tf.keras.layers.Layer):
     merge_list = tf.dynamic_partition(tf.range(np.prod(input_shape[1:])), 1-self.split_mask, 2)
     self.merge_inds = tf.argsort(tf.concat(merge_list, axis=0))
 
-  def call(self, input_tensor):
-    #First flatten the input, then split apart - tf.keras.layers.Flatten flattens all but dim 0
-    flat_out = self.flat(input_tensor)
-    #Apply mask as boolean mask to the second dimension (flattened)
-    t1 = tf.boolean_mask(flat_out, self.split_mask, axis=1)
-    t2 = tf.boolean_mask(flat_out, 1-self.split_mask, axis=1)
-    out = tf.stack([t1, t2], axis=1)
-    return out
-
-  def merge(self, input_tensor):
-    """Merges two tensors back together given a tensor of dimension 2 (second dimension as
+  def call(self, input_tensor, merge=False):
+    """Performs split of an input tensor, flattening then splitting in half.
+       If "merge" is set to True...
+       merges two tensors back together given a tensor of dimension 2 (second dimension as
        first is always batch size).
        Also reshapes back to the original dimension.
     """
-    concat_out = tf.concat(tf.unstack(input_tensor, axis=1), axis=1)
-    sorted_out = tf.gather(concat_out, self.merge_inds, axis=1)
-    out = tf.reshape(sorted_out, (input_tensor.shape[0],)+self.out_shape)
-    return out
+    if not merge:
+      #First flatten the input, then split apart - tf.keras.layers.Flatten flattens all but dim 0
+      flat_out = self.flat(input_tensor)
+      #Apply mask as boolean mask to the second dimension (flattened)
+      t1 = tf.boolean_mask(flat_out, self.split_mask, axis=1)
+      t2 = tf.boolean_mask(flat_out, 1-self.split_mask, axis=1)
+      out = tf.stack([t1, t2], axis=1)
+      return out
+    else:
+      concat_out = tf.concat(tf.unstack(input_tensor, axis=1), axis=1)
+      sorted_out = tf.gather(concat_out, self.merge_inds, axis=1)
+      out = tf.reshape(sorted_out, (input_tensor.shape[0],)+self.out_shape)
+      return out
 
 
 class TransformBlock(tf.keras.layers.Layer):
@@ -111,23 +113,24 @@ class TransformBlock(tf.keras.layers.Layer):
     self.snet = TransformNet(output_dim=self.output_dim, net_dim=self.net_dim)
     self.tnet = TransformNet(output_dim=self.output_dim, net_dim=self.net_dim)
 
-  def call(self, input_tensor):
-    s_out = self.snet(input_tensor[:, 0, :])
-    self.log_det_for_val = tf.reduce_sum(s_out, axis=1)
-    t_out = self.tnet(input_tensor[:, 0, :])
-    trans_out = input_tensor[:, 1, :]*tf.math.exp(s_out) + t_out
-    out = tf.stack([input_tensor[:, 0, :], trans_out], axis=1)
-    return out
-
-  def reverse(self, input_tensor):
-    """Want to be able to call this block in reverse using same neural nets
+  def call(self, input_tensor, reverse=False):
+    """Forward transformation block if "reverse" is set to False (default).
+       "reverse" enables calling this block in reverse using same neural nets.
     """
-    s_out = self.snet(input_tensor[:, 0, :])
-    self.log_det_rev_val = -tf.reduce_sum(s_out, axis=1)
-    t_out = self.tnet(input_tensor[:, 0, :])
-    trans_out = (input_tensor[:, 1, :] - t_out)*tf.math.exp(-s_out)
-    out = tf.stack([input_tensor[:, 0, :], trans_out], axis=1)
-    return out
+    if not reverse:
+      s_out = self.snet(input_tensor[:, 0, :])
+      self.log_det_for_val = tf.reduce_sum(s_out, axis=1)
+      t_out = self.tnet(input_tensor[:, 0, :])
+      trans_out = input_tensor[:, 1, :]*tf.math.exp(s_out) + t_out
+      out = tf.stack([input_tensor[:, 0, :], trans_out], axis=1)
+      return out
+    else:
+      s_out = self.snet(input_tensor[:, 0, :])
+      self.log_det_rev_val = -tf.reduce_sum(s_out, axis=1)
+      t_out = self.tnet(input_tensor[:, 0, :])
+      trans_out = (input_tensor[:, 1, :] - t_out)*tf.math.exp(-s_out)
+      out = tf.stack([input_tensor[:, 0, :], trans_out], axis=1)
+      return out
 
   def log_det_for(self, input_tensor):
     """Computes the log of the Jacobian determinant in the forward direction.
@@ -145,13 +148,22 @@ class InvNet(tf.keras.Model):
   """Invertible transformation model.
   """
 
-  def __init__(self, data_shape, net_dim=1200, n_blocks=4, split_mask=None,
+  def __init__(self, data_shape,
+               net_dim=1200,
+               n_blocks=4,
+               split_mask=None,
+               activation=None,
                name='invnet', **kwargs):
     super(InvNet, self).__init__(name=name, **kwargs)
     #Require data_shape so can know dimension of latent space without data
     self.data_shape = data_shape
     self.net_dim = net_dim
     self.split_mask = split_mask
+    if activation not in [None, 'logits']:
+      print('Activation not recognized, setting to None.')
+      self.activation = None
+    else:
+      self.activation = activation
     #Define all of the layers we will need - remember, they all work in reverse, too
     self.splitter = SplitLayer(split_mask=self.split_mask)
     self.n_blocks = n_blocks #Should have at least 2 so transform everything
@@ -163,39 +175,60 @@ class InvNet(tf.keras.Model):
     self.log_det_for_sum = None
     self.log_det_rev_sum = None
 
-  def call(self, inputs):
-    #First we flatten and split
-    split_out = self.splitter(inputs)
-    #Next pass through each transformation block
-    b_out = self.block_list[0](split_out)
-    for block in self.block_list[1:]:
-      b_out = block(b_out[:, ::-1, :]) #Flip what gets transformed for each block
-    #Finally merge back together into original shape
-    z_out = self.splitter.merge(b_out)
-    #Also track log determinant
-    self.log_det_for_sum = tf.reduce_sum([b.log_det_for_val for b in self.block_list], axis=0)
-    return z_out
-
-  def reverse(self, inputs):
-    #Reverse previous procedure
-    split_out = self.splitter(inputs)
-    b_out = self.block_list[-1].reverse(split_out)
-    for block in self.block_list[-2::-1]:
-      b_out = block.reverse(b_out[:, ::-1, :])
-    x_out = self.splitter.merge(b_out)
-    #Also track log determinant
-    self.log_det_rev_sum = tf.reduce_sum([b.log_det_rev_val for b in self.block_list], axis=0)
-    return x_out
+  def call(self, inputs, reverse=False):
+    if not reverse:
+      #Before doing anything else, apply inverse activation
+      if self.activation == 'logits':
+        #Implement inverse of sigmoid, or logistic function
+        act_out = tf.math.log(inputs / (1.0 - inputs))
+      elif self.activation is None:
+        act_out = inputs
+      #First we flatten and split (after activation)
+      split_out = self.splitter(act_out)
+      #Next pass through each transformation block
+      b_out = self.block_list[0](split_out)
+      for block in self.block_list[1:]:
+        b_out = block(b_out[:, ::-1, :]) #Flip what gets transformed for each block
+      #Finally merge back together into original shape
+      z_out = self.splitter(b_out, merge=True)
+      #Also track log determinant
+      #Can alternatively use tf.GradientTape() to watch the input and determine
+      #the Jacobian through the batch_jacobian(outputs, inputs) function
+      #Probably only easier once the Jacobian is really complicated for the activation
+      self.log_det_for_sum = tf.reduce_sum([b.log_det_for_val for b in self.block_list], axis=0)
+      if self.activation == 'logits':
+        #Add sum of log of derivative of inverse sigmoid to the Jacobian determinant
+        self.log_det_for_sum -= tf.reduce_sum(tf.math.log(inputs*(1.0 - inputs)),
+                                              axis=tf.range(1, len(z_out.shape)))
+      return z_out
+    else:
+      #Reverse previous procedure
+      split_out = self.splitter(inputs)
+      b_out = self.block_list[-1](split_out, reverse=True)
+      for block in self.block_list[-2::-1]:
+        b_out = block(b_out[:, ::-1, :], reverse=True)
+      x_out = self.splitter(b_out, merge=True)
+      #Also track log determinant
+      self.log_det_rev_sum = tf.reduce_sum([b.log_det_rev_val for b in self.block_list], axis=0)
+      if self.activation == 'logits':
+        #Add sum of log of derivative of sigmoid to the Jacobian determinant
+        self.log_det_rev_sum += tf.reduce_sum(tf.math.log_sigmoid(x_out)
+                                              + tf.math.log_sigmoid(-x_out),
+                                              axis=tf.range(1, len(x_out.shape)))
+        x_out = tf.math.sigmoid(x_out)
+      return x_out
 
 
 def trainFromLatent(model,
                     num_steps=10000,
                     batch_size=64,
                     save_dir='inv_info',
-                    overwrite=False):
+                    overwrite=False,
+                    beta=2.0,
+                    energy_params={'mu':-2.0, 'eps':-1.0}):
   """Trains an invertible model by sampling from the latent distribution and computing
-the loss function derived by Noe, et al. (2019). The latent distribution is a standard
-normal distribution (zero mean and unit standard deviation).
+     the loss function derived by Noe, et al. (2019). The latent distribution is a standard
+     normal distribution (zero mean and unit standard deviation).
   """
 
   #Set up checkpointing and saving - load previous model parameters if we can
@@ -204,7 +237,7 @@ normal distribution (zero mean and unit standard deviation).
     #If it's False, create a new directory to save to
     if not overwrite:
       print("Found saved model at %s and overwrite is False."%save_dir)
-      print("Will attempt to load and ocntinue training.")
+      print("Will attempt to load and continue training.")
       model.load_weights(os.path.join(save__dir, 'training.ckpt'))
       try:
         dir_split = save_dir.split('_')
@@ -213,9 +246,9 @@ normal distribution (zero mean and unit standard deviation).
       except ValueError:
         save_dir = '%s_1'%(save_dir)
       os.mkdir(save_dir)
-    #If not, create that directory to save to later
-    else:
-      os.mkdir(save_dir)
+  #If not, create that directory to save to later
+  else:
+    os.mkdir(save_dir)
 
   print("Model set up and ready to train.")
 
@@ -235,14 +268,17 @@ normal distribution (zero mean and unit standard deviation).
   for step in range(num_steps):
 
     #Draw from standard normal
-    z_sample = tf.random.normal((batch_size, model.data_shape))
+    z_sample = tf.random.normal((batch_size,)+model.data_shape)
 
     #Need to do all of the next bit within gradient_tape
     with tf.GradientTape() as tape:
       #Convert latent space representation into real-space
-      x_configs = model.reverse(z_sample)
+      #If working with lattice gas model, make sure to pass through sigmoid function
+      #(that way bounded from 0 to 1 and interpret as probability)
+      #Do this by setting activation='logits' in model because have to handle Jacobian there
+      x_configs = model(z_sample, reverse=True)
       #Calculate the potential energy of the configurations
-      u_vals = losses.LatticeGasHamiltonian(x_configs)
+      u_vals = beta*losses.latticeGasHamiltonian(x_configs, **energy_params)
       #And calculate total loss
       loss = tf.reduce_mean(u_vals - model.log_det_rev_sum)
 
