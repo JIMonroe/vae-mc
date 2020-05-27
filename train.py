@@ -181,7 +181,7 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #But, something weird with batching happens if you use keras loss functions
   #trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
   trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
-                                                 dset='all', permute=True)
+                                                 dset='all', permute=False)
   #trainData = dataloaders.raw_image_data(data_file)
   #trainData, valData = dataloaders.dsprites_data(batch_size, val_frac=0.01)
 
