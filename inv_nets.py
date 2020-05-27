@@ -7,6 +7,8 @@ import numpy as np
 
 from libVAE import losses, dataloaders
 
+from deep_boltzmann.models.particle_dimer import ParticleDimer
+
 
 class TransformNet(tf.keras.layers.Layer):
   """'Scaling' or 'translation' neural net as part of invertible transformation.
@@ -224,7 +226,7 @@ class InvNet(tf.keras.Model):
 
 def trainFromLatent(model,
                     num_steps=10000,
-                    batch_size=64,
+                    batch_size=100,
                     save_dir='inv_info',
                     overwrite=False,
                     beta=2.0,
@@ -241,7 +243,7 @@ def trainFromLatent(model,
     if not overwrite:
       print("Found saved model at %s and overwrite is False."%save_dir)
       print("Will attempt to load and continue training.")
-      model.load_weights(os.path.join(save__dir, 'training.ckpt'))
+      model.load_weights(os.path.join(save_dir, 'training.ckpt'))
       try:
         dir_split = save_dir.split('_')
         train_num = int(dir_split[-1])
@@ -266,6 +268,12 @@ def trainFromLatent(model,
 
   print("Beginning training at: %s"%time.ctime())
 
+  #pot_energy = losses.latticeGasHamiltonian
+  params = ParticleDimer.params_default.copy()
+  params['dimer_slope'] = 2.0
+  dimer_model = ParticleDimer(params=params)
+  pot_energy = dimer_model.energy
+
   #Will loop over num_steps, creating sample of size batch_size each time for training
   #Loss will be part of training loop
   for step in range(num_steps):
@@ -281,15 +289,18 @@ def trainFromLatent(model,
       #Do this by setting activation='logits' in model because have to handle Jacobian there
       x_configs = model(z_sample, reverse=True)
       #Calculate the potential energy of the configurations
-      u_vals = beta*losses.latticeGasHamiltonian(x_configs, **energy_params)
+      u_vals = beta*pot_energy(x_configs, **energy_params)
       #And calculate total loss
-      loss = tf.reduce_mean(u_vals - model.log_det_rev_sum)
+      loss_energy = tf.reduce_mean(u_vals)
+      loss_jacobian = tf.reduce_mean(model.log_det_rev_sum)
+      loss = loss_energy - loss_jacobian
 
     grads = tape.gradient(loss, model.trainable_weights)
     optimizer.apply_gradients(zip(grads, model.trainable_weights))
 
     if step%1000 == 0:
-      print('\nStep %i: loss=%f'%(step, loss))
+      print('\tStep %i: loss=%f, log_probs=%f, logRzx=%f'%(step, loss,
+                                                           loss_energy, loss_jacobian))
       #Save checkpoint
       print('\tSaving checkpoint.')
       model.save_weights(checkpoint_path.format(epoch=step))
@@ -332,7 +343,9 @@ def trainFromExample(model,
   checkpoint_path = os.path.join(save_dir, 'training.ckpt')
 
   #Load in data
-  trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
+  #trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
+  trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
+                                                 dset='all', permute=True)
 
   #Set up optimizer
   optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001,
