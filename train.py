@@ -181,7 +181,7 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #But, something weird with batching happens if you use keras loss functions
   #trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
   trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
-                                                 dset='all', permute=False)
+                                                 dset='all', permute=True)
   #trainData = dataloaders.raw_image_data(data_file)
   #trainData, valData = dataloaders.dsprites_data(batch_size, val_frac=0.01)
 
@@ -241,8 +241,8 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
     batchCount = 0.0
     for x_batch_val in valData:
       reconstructed = model(x_batch_val[0])
-      val_loss += loss_fn(x_batch_val[0], reconstructed) #/ x_batch_val[0].shape[0]
-      val_loss += sum(model.losses) * x_batch_train[0].shape[0]
+      val_loss += loss_fn(x_batch_val[0], reconstructed) / x_batch_val[0].shape[0] / 2.0
+      val_loss += sum(model.losses) #* x_batch_train[0].shape[0]
       if extraLossFunc is not None:
         extra_loss = tf.cast(extraLossFunc(x_batch_val[0], reconstructed), 'float32')
         val_loss += extra_loss
