@@ -213,8 +213,8 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
         ametric.reset_states()
       with tf.GradientTape() as tape:
         reconstructed = model(x_batch_train[0])
-        loss = loss_fn(x_batch_train[0], reconstructed) #/ x_batch_train[0].shape[0]
-        loss += sum(model.losses) * x_batch_train[0].shape[0]
+        loss = loss_fn(x_batch_train[0], reconstructed) / x_batch_train[0].shape[0] / 2.0
+        loss += sum(model.losses) #* x_batch_train[0].shape[0]
         if extraLossFunc is not None:
           extra_loss = tf.cast(extraLossFunc(x_batch_train[0], reconstructed), 'float32')
           loss += extra_loss
