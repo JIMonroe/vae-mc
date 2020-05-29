@@ -224,6 +224,18 @@ class InvNet(tf.keras.Model):
       return x_out
 
 
+def linlogcut_tf(x, high_E=100, max_E=1e10):
+    """Function to clip large energies - taken from Frank Noe's deep_boltzmann package.
+    """
+    # cutoff x after max_E - this should also cutoff infinities
+    x = tf.where(x < max_E, x, max_E * tf.ones(tf.shape(x)))
+    # log after high_E
+    y = high_E + tf.where(x < high_E, x - high_E, tf.math.log(x - high_E + 1))
+    # make sure everything is finite
+    y = tf.where(tf.math.is_finite(y), y, max_E * tf.ones(tf.shape(y)))
+    return y
+
+
 def trainFromLatent(model,
                     num_steps=10000,
                     batch_size=100,
@@ -290,8 +302,9 @@ def trainFromLatent(model,
       x_configs = model(z_sample, reverse=True)
       #Calculate the potential energy of the configurations
       u_vals = beta*pot_energy(x_configs, **energy_params)
+      u_vals_clipped = linlogcut_tf(u_vals, high_E=10000, max_E=1e10)
       #And calculate total loss
-      loss_energy = tf.reduce_mean(u_vals)
+      loss_energy = tf.reduce_mean(u_vals_clipped)
       loss_jacobian = tf.reduce_mean(model.log_det_rev_sum)
       loss = loss_energy - loss_jacobian
 
