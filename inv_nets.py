@@ -15,7 +15,7 @@ class TransformNet(tf.keras.layers.Layer):
   """
 
   def __init__(self, output_dim=None, net_dim=1200, name='transform_net',
-               kernel_initializer='glorot_uniform', **kwargs):
+               kernel_initializer='zeros', **kwargs):
     super(TransformNet, self).__init__(name=name, **kwargs)
     self.output_dim = output_dim
     self.net_dim = net_dim
