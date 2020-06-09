@@ -15,19 +15,26 @@ class TransformNet(tf.keras.layers.Layer):
   """
 
   def __init__(self, output_dim=None, net_dim=1200, name='transform_net',
-               kernel_initializer='zeros', **kwargs):
+               kernel_initializer='glorot_normal', activation='relu', **kwargs):
     super(TransformNet, self).__init__(name=name, **kwargs)
     self.output_dim = output_dim
     self.net_dim = net_dim
     self.kernel_initializer = kernel_initializer
+    if activation == 'relu':
+      self.activation = tf.nn.relu
+    elif activation == 'tanh':
+      self.activation = tf.nn.tanh
+    else:
+      print('Activation not recognized, setting to relu.')
+      self.activation = tf.nn.relu
 
   def build(self, input_shape):
     if self.output_dim is None:
       #First dimension is number of samples and may be None
       self.output_dim = input_shape[1]
-    self.e1 = tf.keras.layers.Dense(self.net_dim, activation=tf.nn.relu, name="e1",
+    self.e1 = tf.keras.layers.Dense(self.net_dim, activation=self.activation, name="e1",
                                     kernel_initializer=self.kernel_initializer)
-    self.e2 = tf.keras.layers.Dense(self.net_dim, activation=tf.nn.relu, name="e2",
+    self.e2 = tf.keras.layers.Dense(self.net_dim, activation=self.activation, name="e2",
                                     kernel_initializer=self.kernel_initializer)
     self.e3 = tf.keras.layers.Dense(self.output_dim, activation=None,
                                     kernel_initializer=self.kernel_initializer)
@@ -112,8 +119,8 @@ class TransformBlock(tf.keras.layers.Layer):
   def build(self, input_shape):
     if self.output_dim is None:
       self.output_dim = input_shape[2]
-    self.snet = TransformNet(output_dim=self.output_dim, net_dim=self.net_dim)
-    self.tnet = TransformNet(output_dim=self.output_dim, net_dim=self.net_dim)
+    self.snet = TransformNet(output_dim=self.output_dim, net_dim=self.net_dim, activation='tanh')
+    self.tnet = TransformNet(output_dim=self.output_dim, net_dim=self.net_dim, activation='relu')
 
   def call(self, input_tensor, reverse=False):
     """Forward transformation block if "reverse" is set to False (default).
@@ -421,7 +428,7 @@ def trainWeighted(model,
                   overwrite=False,
                   beta=2.0,
                   energy_params={'mu':-2.0, 'eps':-1.0},
-                  weights=[1.0, 1.0]):
+                  loss_weights=[1.0, 1.0]):
   """Trains an invertible model by examples provided in data_file.
   """
 
@@ -468,13 +475,6 @@ def trainWeighted(model,
   dimer_model = ParticleDimer(params=params)
   pot_energy = dimer_model.energy
 
-  #Will loop over num_steps, creating sample of size batch_size each time for training
-  #Loss will be part of training loop
-  for step in range(num_steps):
-
-    #Need to do all of the next bit within gradient_tape
-    with tf.GradientTape() as tape:
-
   #Will loop over epochs 
   for epoch in range(num_epochs):
     print('\nOn epoch %d:'%epoch)
@@ -493,7 +493,7 @@ def trainWeighted(model,
         #Sticking to standard normal distributions in latent space
         z_configs = model(x_batch_train[0])
         #Calculate the log probabilities in latent space given standard normal distribution
-        log_probs = tf.reduce_sum(tf.square(z_configs), axis=tf.range(1, len(z_configs.shape))
+        log_probs = tf.reduce_sum(tf.square(z_configs), axis=tf.range(1, len(z_configs.shape)))
         #And calculate total loss
         loss_probs = tf.reduce_mean(log_probs)
         loss_jacobian_ex = tf.reduce_mean(model.log_det_for_sum)
@@ -514,7 +514,7 @@ def trainWeighted(model,
         loss_la = loss_energy - loss_jacobian_la
 
         #And total loss from both training by example and latent sampling
-        loss = weights[0]*loss_ex + weights[1]*loss_la
+        loss = loss_weights[0]*loss_ex + loss_weights[1]*loss_la
 
       grads = tape.gradient(loss, model.trainable_weights)
       optimizer.apply_gradients(zip(grads, model.trainable_weights))
