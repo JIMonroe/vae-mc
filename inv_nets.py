@@ -287,11 +287,11 @@ def trainFromLatent(model,
 
   print("Beginning training at: %s"%time.ctime())
 
-  #pot_energy = losses.latticeGasHamiltonian
-  params = ParticleDimer.params_default.copy()
-  params['dimer_slope'] = 2.0
-  dimer_model = ParticleDimer(params=params)
-  pot_energy = dimer_model.energy
+  pot_energy = losses.latticeGasHamiltonian
+  #params = ParticleDimer.params_default.copy()
+  #params['dimer_slope'] = 2.0
+  #dimer_model = ParticleDimer(params=params)
+  #pot_energy = dimer_model.energy_tf
 
   #Will loop over num_steps, creating sample of size batch_size each time for training
   #Loss will be part of training loop
@@ -363,9 +363,9 @@ def trainFromExample(model,
   checkpoint_path = os.path.join(save_dir, 'training.ckpt')
 
   #Load in data
-  #trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
-  trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
-                                                 dset='all', permute=True)
+  trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
+  #trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
+  #                                               dset='all', permute=True)
 
   #Set up optimizer
   optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001,
@@ -456,9 +456,9 @@ def trainWeighted(model,
   checkpoint_path = os.path.join(save_dir, 'training.ckpt')
 
   #Load in data
-  #trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
-  trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
-                                                 dset='all', permute=True)
+  trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
+  #trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
+  #                                               dset='all', permute=True)
 
   #Set up optimizer
   optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001,
@@ -469,11 +469,11 @@ def trainWeighted(model,
 
   print("Beginning training at: %s"%time.ctime())
 
-  #pot_energy = losses.latticeGasHamiltonian
-  params = ParticleDimer.params_default.copy()
-  params['dimer_slope'] = 2.0
-  dimer_model = ParticleDimer(params=params)
-  pot_energy = dimer_model.energy
+  pot_energy = losses.latticeGasHamiltonian
+  #params = ParticleDimer.params_default.copy()
+  #params['dimer_slope'] = 2.0
+  #dimer_model = ParticleDimer(params=params)
+  #pot_energy = dimer_model.energy_tf
 
   #Will loop over epochs 
   for epoch in range(num_epochs):
