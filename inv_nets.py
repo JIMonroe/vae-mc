@@ -413,5 +413,134 @@ def trainFromExample(model,
   print(model.summary())
 
 
+def trainWeighted(model,
+                  data_file,
+                  num_epochs=2,
+                  batch_size=64,
+                  save_dir='inv_info',
+                  overwrite=False,
+                  beta=2.0,
+                  energy_params={'mu':-2.0, 'eps':-1.0},
+                  weights=[1.0, 1.0]):
+  """Trains an invertible model by examples provided in data_file.
+  """
+
+  #Set up checkpointing and saving - load previous model parameters if we can
+  if os.path.isdir(save_dir):
+    #If overwrite is True, don't need to do anything
+    #If it's False, create a new directory to save to
+    if not overwrite:
+      print("Found saved model at %s and overwrite is False."%save_dir)
+      print("Will attempt to load and continue training.")
+      model.load_weights(os.path.join(save__dir, 'training.ckpt'))
+      try:
+        dir_split = save_dir.split('_')
+        train_num = int(dir_split[-1])
+        save_dir = '%s_%i'%("_".join(dir_split[:-1]), train_num+1)
+      except ValueError:
+        save_dir = '%s_1'%(save_dir)
+      os.mkdir(save_dir)
+  #If not, create that directory to save to later
+  else:
+    os.mkdir(save_dir)
+
+  print("Model set up and ready to train.")
+
+  checkpoint_path = os.path.join(save_dir, 'training.ckpt')
+
+  #Load in data
+  #trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
+  trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
+                                                 dset='all', permute=True)
+
+  #Set up optimizer
+  optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001,
+                                       beta_1=0.9,
+                                       beta_2=0.999,
+                                       epsilon=1e-08,
+                                      )
+
+  print("Beginning training at: %s"%time.ctime())
+
+  #pot_energy = losses.latticeGasHamiltonian
+  params = ParticleDimer.params_default.copy()
+  params['dimer_slope'] = 2.0
+  dimer_model = ParticleDimer(params=params)
+  pot_energy = dimer_model.energy
+
+  #Will loop over num_steps, creating sample of size batch_size each time for training
+  #Loss will be part of training loop
+  for step in range(num_steps):
+
+    #Need to do all of the next bit within gradient_tape
+    with tf.GradientTape() as tape:
+
+  #Will loop over epochs 
+  for epoch in range(num_epochs):
+    print('\nOn epoch %d:'%epoch)
+
+    #Iterate over batches in the dataset
+    for step, x_batch_train in enumerate(trainData):
+
+      #For each x batch, also generate random z batch
+      #Draw from standard normal
+      z_sample = tf.random.normal((batch_size,)+model.data_shape)
+
+      #Need to do all of the next bit within gradient_tape
+      with tf.GradientTape() as tape:
+        #First calculating loss through training by example
+        #Convert real space to latent space representation
+        #Sticking to standard normal distributions in latent space
+        z_configs = model(x_batch_train[0])
+        #Calculate the log probabilities in latent space given standard normal distribution
+        log_probs = tf.reduce_sum(tf.square(z_configs), axis=tf.range(1, len(z_configs.shape))
+        #And calculate total loss
+        loss_probs = tf.reduce_mean(log_probs)
+        loss_jacobian_ex = tf.reduce_mean(model.log_det_for_sum)
+        loss_ex = loss_probs - loss_jacobian_ex
+
+        #Next get loss from training by sampling the latent space
+        #Convert latent space representation into real-space
+        #If working with lattice gas model, make sure to pass through sigmoid function
+        #(that way bounded from 0 to 1 and interpret as probability)
+        #Do this by setting activation='logits' in model because have to handle Jacobian there
+        x_configs = model(z_sample, reverse=True)
+        #Calculate the potential energy of the configurations
+        u_vals = beta*pot_energy(x_configs, **energy_params)
+        u_vals_clipped = linlogcut_tf(u_vals, high_E=10000, max_E=1e10)
+        #And calculate total loss
+        loss_energy = tf.reduce_mean(u_vals_clipped)
+        loss_jacobian_la = tf.reduce_mean(model.log_det_rev_sum)
+        loss_la = loss_energy - loss_jacobian_la
+
+        #And total loss from both training by example and latent sampling
+        loss = weights[0]*loss_ex + weights[1]*loss_la
+
+      grads = tape.gradient(loss, model.trainable_weights)
+      optimizer.apply_gradients(zip(grads, model.trainable_weights))
+
+      if step%100 == 0:
+        print('\tStep %i: loss=%f, loss_ex=%f, log_probs=%f, logRxz=%f,' \
+              ' loss_la=%f, log_energy=%f, logRzx=%f'%(step, loss,
+                                                       loss_ex, loss_probs, loss_jacobian_ex,
+                                                       loss_la, loss_energy, loss_jacobian_la))
+
+    #Save checkpoint
+    print('\tEpoch finished, saving checkpoint.')
+    model.save_weights(checkpoint_path.format(epoch=epoch))
+
+    #Check against validation data without sampling the latent space
+    val_loss = tf.constant(0.0)
+    batchCount = 0.0
+    for x_batch_val in valData:
+      z_configs = model(x_batch_val[0])
+      log_probs = tf.reduce_sum(tf.square(z_configs), axis=tf.range(1, len(z_configs.shape)))
+      val_loss += tf.reduce_mean(log_probs - model.log_det_for_sum)
+      batchCount += 1.0
+    val_loss /= batchCount
+    print('\tValidation loss (example only) = %f'%(val_loss))
+
+  print("Training completed at: %s"%time.ctime())
+  print(model.summary())
 
 
