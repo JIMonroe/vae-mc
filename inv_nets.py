@@ -194,6 +194,7 @@ class InvNet(tf.keras.Model):
         clip_out = tf.clip_by_value(inputs, 1e-07, 1.0-1e-07)
         act_out = tf.math.log(clip_out / (1.0 - clip_out))
       elif self.activation is None:
+        clip_out = inputs
         act_out = inputs
       #First we flatten and split (after activation)
       split_out = self.splitter(act_out)
@@ -210,7 +211,7 @@ class InvNet(tf.keras.Model):
       self.log_det_for_sum = tf.reduce_sum([b.log_det_for_val for b in self.block_list], axis=0)
       if self.activation == 'logits':
         #Add sum of log of derivative of inverse sigmoid to the Jacobian determinant
-        self.log_det_for_sum -= tf.reduce_sum(tf.math.log(inputs*(1.0 - inputs)),
+        self.log_det_for_sum -= tf.reduce_sum(tf.math.log(clip_out*(1.0 - clip_out)),
                                               axis=tf.range(1, len(z_out.shape)))
       return z_out
     else:
@@ -346,7 +347,7 @@ def trainFromExample(model,
     if not overwrite:
       print("Found saved model at %s and overwrite is False."%save_dir)
       print("Will attempt to load and continue training.")
-      model.load_weights(os.path.join(save__dir, 'training.ckpt'))
+      model.load_weights(os.path.join(save_dir, 'training.ckpt'))
       try:
         dir_split = save_dir.split('_')
         train_num = int(dir_split[-1])
