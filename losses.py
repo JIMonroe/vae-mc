@@ -149,8 +149,7 @@ def relative_boltzmann_loss(x_sample,
                             x_probs,
                             energy_func=latticeGasHamiltonian,
                             func_params=[-2.0, -1.0],
-                            beta=1.0,
-                            n_samples=1000):
+                            beta=1.0):
   """Loss function that computes the MSE between relative probability weights predicted
 by a vae_model and those known to occur for a Boltzmann distribution. In other words, the
 relative Boltzmann log weights are the reduced potential differences and the relative log
@@ -159,11 +158,14 @@ over z. A vae_model must be provided so that we can compute P(x|z). No examples 
 necessary to train this objective function as the relative Boltzmann weights are known
 a priori.
   """
+  #Get number of samples
+  n_samples = x_samples.shape[0]
+
   #Get all potential energies now (before fancy reshaping, etc.)
   u_pot = energy_func(x_sample, *func_params)
 
   #Can use broadcasting trick to do everything in one shot, no loop (at least not in python)
-  #Requires more memory - specifically multiplies size of x_sample by n_samples
+  #Requires more memory - specifically multiplies size of x_sample by x_sample.shape[0]
   x_sample = tf.reshape(x_sample, (x_sample.shape[0],1)+x_sample.shape[1:])
   log_pxz = tf.reduce_sum(x_sample*tf.math.log(x_probs)
                           + (1.0 - x_sample)*tf.math.log(1.0 - x_probs), axis=(2,3,4))

@@ -346,8 +346,7 @@ distributions of latent variables.
       x_logits = model.decoder(z_sample)
       x_probs = tf.math.sigmoid(x_logits)
       loss = losses.relative_boltzmann_loss(x_sample, x_probs,
-                                            beta=beta, func_params=[mu, eps],
-                                            n_samples=batch_size)
+                                            beta=beta, func_params=[mu, eps])
 
     grads = tape.gradient(loss, model.trainable_weights)
     optimizer.apply_gradients(zip(grads, model.trainable_weights))
