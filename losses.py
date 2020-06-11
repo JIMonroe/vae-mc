@@ -158,9 +158,6 @@ over z. A vae_model must be provided so that we can compute P(x|z). No examples 
 necessary to train this objective function as the relative Boltzmann weights are known
 a priori.
   """
-  #Get number of samples
-  n_samples = x_samples.shape[0]
-
   #Get all potential energies now (before fancy reshaping, etc.)
   u_pot = energy_func(x_sample, *func_params)
 
@@ -169,12 +166,18 @@ a priori.
   x_sample = tf.reshape(x_sample, (x_sample.shape[0],1)+x_sample.shape[1:])
   log_pxz = tf.reduce_sum(x_sample*tf.math.log(x_probs)
                           + (1.0 - x_sample)*tf.math.log(1.0 - x_probs), axis=(2,3,4))
-  log_avg_pxz = tf.reduce_logsumexp(log_pxz - tf.math.log(float(n_samples)), axis=(1))
+  log_avg_pxz = tf.reduce_logsumexp(log_pxz, axis=(1)) - tf.math.log(float(x_probs.shape[0]))
+
+  loss_px = tf.reduce_mean(log_avg_pxz)
+  loss_u = tf.reduce_mean(beta*u_pot)
+
+  loss = loss_px + loss_u
 
   #And compute loss using first configuration as reference
-  loss = tf.reduce_mean(tf.math.square(log_avg_pxz[1:] - log_avg_pxz[0]
-                                       + beta*(u_pot[1:] - u_pot[0])))
-  return loss
+  #loss = tf.reduce_mean(tf.math.square(log_avg_pxz[1:] - log_avg_pxz[0]
+  #                                     + beta*(u_pot[1:] - u_pot[0])))
+  #loss = tf.reduce_mean(log_avg_pxz + beta*u_pot)
+  return loss, loss_px, loss_u
 
 
 class ReconLoss(tf.keras.losses.Loss):

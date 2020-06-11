@@ -266,9 +266,15 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #model.save(os.path.join(save_dir, 'model'), save_format='tf')
 
 
+#This approach DOES NOT WORK
+#The method of performing averaging implemented below will not correctly compute the derivative
+#Because the probability of an x configuration itself depends on the parameters,
+#simple averaging over generated z and x will not work.
+#Even with reparametrization tricks the issue will remain.
 def trainGenerator(model,
                    num_epochs=10000,
-                   batch_size=1000,
+                   batch_size=64,
+                   z_batch_size=1000,
                    save_dir='vae_info',
                    overwrite=False,
                    beta=2.0,
@@ -329,36 +335,47 @@ distributions of latent variables.
 
     #First step is to generate z sample from the VAE model
     #If the model is well-trained, the model distribution of z should be standard normal
-    z_sample = tf.random.normal((batch_size, model.num_latent))
+    z_sample = tf.random.normal((z_batch_size, model.num_latent))
 
     #Obtain probabilities of x given z
-    #To avoid calculating twice, do with gradient tape on
-    #with tf.GradientTape() as tape:
-    x_logits = model.decoder(z_sample)
-    x_probs = tf.math.sigmoid(x_logits)
- 
-    #Generate x samples from probabilities given z samples
-    rand_probs = tf.random.uniform(x_probs.shape)
-    x_sample = tf.cast((x_probs > rand_probs), 'float32')
+    #x_logits_temp = model.decoder(z_sample)
+    #x_probs_temp = tf.math.sigmoid(x_logits_temp)
 
+    #Generate x samples from probabilities given z samples
+    #rand_inds = np.random.choice(x_probs_temp.shape[0], size=batch_size, replace=False)
+    #rand_probs = tf.random.uniform(x_probs_temp.shape)
+    #x_sample = tf.cast((x_probs_temp > rand_probs), 'float32').numpy()[rand_inds]
+
+    #Randomly select some x probabilities to use as samples
+    rand_inds = np.random.choice(z_batch_size, size=batch_size, replace=False)
+ 
     #Compute loss based on generated sample
     with tf.GradientTape() as tape:
+      #Obtain probabilities of x given z
       x_logits = model.decoder(z_sample)
       x_probs = tf.math.sigmoid(x_logits)
-      loss = losses.relative_boltzmann_loss(x_sample, x_probs,
-                                            beta=beta, func_params=[mu, eps])
 
-    grads = tape.gradient(loss, model.trainable_weights)
-    optimizer.apply_gradients(zip(grads, model.trainable_weights))
+      #To get x samples, should technically draw based on x_probs
+      #However, then we cannot take derivatives with respect to the model parameters
+      #This also means the computed potential energies will be the average energies
+      #Technically still taking gradient of an expectation that depends on model parameters
+      #Sort of funky
+      x_sample = tf.gather(x_probs, rand_inds, axis=0)
 
-    if epoch%1000 == 0:
-      print('\nStep %i: loss=%f'%(epoch, loss))
-      #Save checkpoint after each epoch
+      loss, loss_px, loss_u = losses.relative_boltzmann_loss(x_sample, x_probs,
+                                                             beta=beta, func_params=[mu, eps])
+
+    grads = tape.gradient(loss, model.decoder.trainable_weights)
+    optimizer.apply_gradients(zip(grads, model.decoder.trainable_weights))
+
+    if epoch%100 == 0:
+      print('\nStep %i: loss=%f, log_px=%f, u=%f'%(epoch, loss, loss_px, loss_u))
+      #Save checkpoint
       print('\tSaving checkpoint.')
       model.save_weights(checkpoint_path.format(epoch=epoch))
 
   print("Training completed at: %s"%time.ctime())
   model.save_weights(checkpoint_path.format(epoch=num_epochs-1))
-  print(model.summary())
+  #print(model.summary())
 
 
