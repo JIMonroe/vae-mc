@@ -68,6 +68,24 @@ def bernoulli_loss(true_images,
   return loss - loss_lower_bound
 
 
+#Generic loss that would work for particle-based simulation or images/lattices
+#Essentially just a generalization of MSE loss
+#Does assume a diagonal covariance matrix
+def diag_gaussian_loss(true_vals,
+                       recon_means,
+                       recon_log_var):
+  """Computes the loss assuming a Gaussian distribution (with diagonal covariance matrix) for
+the probability distribution of the reconstruction model."""
+  #Negative logP is represented below
+  mse_term = 0.5*tf.square(true_vals - recon_means)*tf.exp(-recon_log_var)
+  reg_term = 0.5*recon_log_var
+  #norm_term = 0.5*tf.math.log(2.0*np.pi)
+  sum_terms = tf.reduce_sum(mse_term + reg_term, # + norm_term,
+                            axis=np.arange(1, len(true_vals.shape))
+  loss = tf.reduce_sum(sum_terms) #Summing loss over all samples to return
+  return loss
+
+
 #Identical to tf.keras.losses.mse(), but sigmoid applied to reconstruction first
 #(if activation is "logits")
 #AND, have to somehow get that loss function to do reduce_sum on all but first dimension

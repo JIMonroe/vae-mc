@@ -166,25 +166,42 @@ class FCDecoder(tf.keras.layers.Layer):
   """
 
   def __init__(self, out_shape, name='decoder',
-               kernel_initializer='glorot_uniform', **kwargs):
+               kernel_initializer='glorot_uniform',
+               return_vars=False, **kwargs):
     super(FCDecoder, self).__init__(name=name, **kwargs)
     self.out_shape = out_shape
     self.kernel_initializer=kernel_initializer
+    self.return_vars = return_vars
     self.d1 = tf.keras.layers.Dense(1200, activation=tf.nn.tanh,
                                     kernel_initializer=self.kernel_initializer)
     self.d2 = tf.keras.layers.Dense(1200, activation=tf.nn.tanh,
                                     kernel_initializer=self.kernel_initializer)
-    self.d3 = tf.keras.layers.Dense(1200, activation=tf.nn.tanh,
-                                    kernel_initializer=self.kernel_initializer)
-    self.d4 = tf.keras.layers.Dense(np.prod(out_shape),
-                                    kernel_initializer=self.kernel_initializer)
+    #self.d3 = tf.keras.layers.Dense(1200, activation=tf.nn.tanh,
+    #                                kernel_initializer=self.kernel_initializer)
+    #self.d4 = tf.keras.layers.Dense(np.prod(out_shape),
+    #                                kernel_initializer=self.kernel_initializer)
+    self.means = tf.keras.layers.Dense(np.prod(out_shape), activation=None,
+                                       kernel_initializer=self.kernel_initializer)
+    if self.return_vars:
+      #Set up to return variances in addition to means (don't assume all std are 1)
+      #For lattice gas, really returning logits
+      #(but once convert to Bernoulli probability can think of as mean)
+      #Anyway, for a lattice gas, returning variances does not make sense
+      self.log_var = tf.keras.layers.Dense(np.prod(out_shape), activation=None,
+                                           kernel_initializer=self.kernel_initializer)
 
   def call(self, latent_tensor):
     d1_out = self.d1(latent_tensor)
     d2_out = self.d2(d1_out)
-    d3_out = self.d3(d2_out)
-    d4_out = self.d4(d3_out)
-    return tf.reshape(d4_out, shape=(-1,) + self.out_shape)
+    #d3_out = self.d3(d2_out)
+    #d4_out = self.d4(d3_out)
+    #return tf.reshape(d4_out, shape=(-1,) + self.out_shape)
+    means_out = tf.reshape(self.means(d2_out), shape=(-1,)+self.out_shape)
+    if self.return_vars:
+      log_var_out = tf.reshape(self.log_var(d2_out), shape=(-1,)+self.out_shape)
+      return means_out, log_var_out
+    else:
+      return means_out
 
 
 class DeconvDecoder(tf.keras.layers.Layer):

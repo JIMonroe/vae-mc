@@ -26,10 +26,12 @@ import tensorflow as tf
 class BaseVAE(tf.keras.Model):
   """Abstract base class of a basic VAE."""
 
-  def __init__(self, data_shape, num_latent, name='vae', arch='fc', **kwargs):
+  def __init__(self, data_shape, num_latent,
+               name='vae', arch='fc', include_vars=False, **kwargs):
     super(BaseVAE, self).__init__(name=name, **kwargs)
     self.data_shape = data_shape
     self.num_latent = num_latent
+    self.include_vars = include_vars
     #By default, use fully-connect (fc) architecture for neural nets
     #Can switch to convolutional if specify arch='conv'
     self.arch = arch
@@ -38,7 +40,7 @@ class BaseVAE(tf.keras.Model):
       self.decoder = architectures.DeconvDecoder(data_shape)
     else:
       self.encoder = architectures.FCEncoder(num_latent)
-      self.decoder = architectures.FCDecoder(data_shape)
+      self.decoder = architectures.FCDecoder(data_shape, return_vars=self.include_vars)
     self.sampler = architectures.SampleLatent()
 
   def regularizer(self, kl_loss, z_mean, z_logvar, z_sampled):
@@ -50,6 +52,7 @@ class BaseVAE(tf.keras.Model):
     z_mean, z_logvar = self.encoder(inputs)
     z = self.sampler(z_mean, z_logvar)
     reconstructed = self.decoder(z)
+    #Note that if include_vars is True reconstructed will be a tuple of (means, log_vars)
     kl_loss = losses.compute_gaussian_kl(z_mean, z_logvar)
     reg_loss = self.regularizer(kl_loss, z_mean, z_logvar, z)
     #Add losses within here - keeps code cleaner and less confusing
