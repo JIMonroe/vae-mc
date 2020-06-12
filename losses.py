@@ -140,6 +140,14 @@ just have one, add a first dimension to it.
   return H
 
 
+def dimerHamiltonian():
+  from deep_boltzmann.models.particle_dimer import ParticleDimer
+  params = ParticleDimer.params_default.copy()
+  params['dimer_slope'] = 2.0
+  dim_model = ParticleDimer(params=params)
+  return dim_model.energy_tf
+
+
 def gaussian_sampler(mean, logvar):
   """Simple samples a Gaussian distribution given means and log variances. Same as using
 the reparametrization trick so can add this to a loss function and use samples rather than
@@ -160,6 +168,9 @@ the price of having sharper gradients in your optimization.
   """
   eps = tf.random.uniform(tf.shape(logits))
   return tf.math.sigmoid(beta*(logits + tf.math.log(eps) - tf.math.log(1.0-eps)))
+
+
+def 
 
 
 def transform_MSE_loss(transform_fn=latticeGasHamiltonian,
