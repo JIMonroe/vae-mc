@@ -140,6 +140,28 @@ just have one, add a first dimension to it.
   return H
 
 
+def gaussian_sampler(mean, logvar):
+  """Simple samples a Gaussian distribution given means and log variances. Same as using
+the reparametrization trick so can add this to a loss function and use samples rather than
+means to do things like compute energies.
+  """
+  return tf.add(mean,
+                tf.exp(logvar / 2.0) * tf.random.normal(tf.shape(mean), 0, 1)
+               )
+
+
+def bernoulli_sampler(logits, beta=10.0):
+  """Implements the reparametrization trick but (approximately) for a Bernoulli distribution
+(see Maddison, Mnih, and Teh, "The concrete distribution: A continuous relaxation fo discrete
+random variables," 2016 for more information. Essentially takes a logit (NOT a probability)
+and converting the output into a zero or one by drawing another random number from a uniform
+distribution. The larger beta is, the closer to zero or one the output will be, but you pay
+the price of having sharper gradients in your optimization.
+  """
+  eps = tf.random.uniform(tf.shape(logits))
+  return tf.math.sigmoid(beta*(logits + tf.math.log(eps) - tf.math.log(1.0-eps)))
+
+
 def transform_MSE_loss(transform_fn=latticeGasHamiltonian,
                        func_params=[-2.0, -1.0],
                        activation=None,
