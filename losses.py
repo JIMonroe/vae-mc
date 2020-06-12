@@ -23,7 +23,7 @@ import tensorflow_probability as tfp
 #Not perfectly efficient or pythonian, but take care of that here, creating global definitions
 #However, will try and keep these definitions within this module by indicating privacy
 from deep_boltzmann.models.particle_dimer import ParticleDimer
-_dimer_params = ParticleDimer.dimer_params_default.copy()
+_dimer_params = ParticleDimer.params_default.copy()
 _dimer_params['dimer_slope'] = 2.0
 _dim_model = ParticleDimer(params=_dimer_params)
 
@@ -203,7 +203,7 @@ Then compares energies of samples (reconstructions) to those of actual configura
 
 
 def sampled_lg_MSE_loss(true_confs, logits, weight=1.0, sample_beta=10.0,
-                        energy_params={mu:-2.0, eps:-1.0}):
+                        energy_params={'mu':-2.0, 'eps':-1.0}):
   """Samples (approximately) Bernoulli variables (zeros and ones) from given logits, then
 calculates energy and compares to energy of true configurations via MSE.
   """
