@@ -81,7 +81,7 @@ the probability distribution of the reconstruction model."""
   reg_term = 0.5*recon_log_var
   #norm_term = 0.5*tf.math.log(2.0*np.pi)
   sum_terms = tf.reduce_sum(mse_term + reg_term, # + norm_term,
-                            axis=np.arange(1, len(true_vals.shape))
+                            axis=np.arange(1, len(true_vals.shape)))
   loss = tf.reduce_sum(sum_terms) #Summing loss over all samples to return
   return loss
 
