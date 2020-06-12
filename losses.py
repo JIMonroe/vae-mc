@@ -19,6 +19,14 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
 
+#For the dimer system, nice to have the energy function easily on hand
+#Not perfectly efficient or pythonian, but take care of that here, creating global definitions
+#However, will try and keep these definitions within this module by indicating privacy
+from deep_boltzmann.models.particle_dimer import ParticleDimer
+_dimer_params = ParticleDimer.dimer_params_default.copy()
+_dimer_params['dimer_slope'] = 2.0
+_dim_model = ParticleDimer(params=_dimer_params)
+
 
 #Identical to tf.keras.losses.BinaryCrossentropy(from_logits=True)
 #(if activation is "logits")
@@ -133,19 +141,33 @@ just have one, add a first dimension to it.
   """
   tfconf = tf.cast(conf, 'float32')
   #Shift all indices by 1 in up and down then left and right and multiply by original
-  ud = eps*tf.reduce_sum(tfconf*tf.roll(tfconf, 1, axis=1), axis=(1,2,3))
-  lr = eps*tf.reduce_sum(tfconf*tf.roll(tfconf, 1, axis=2), axis=(1,2,3))
+  ud = eps*tfconf*tf.roll(tfconf, 1, axis=1)
+  lr = eps*tfconf*tf.roll(tfconf, 1, axis=2)
   #Next incorporate chemical potential term
-  H = ud + lr - mu*tf.reduce_sum(tfconf, axis=(1,2,3))
+  chempot = mu*tfconf
+  #And sum everything up
+  H = tf.reduce_sum(ud + lr - chempot, axis=np.arange(1, len(tfconf.shape)))
   return H
 
 
-def dimerHamiltonian():
-  from deep_boltzmann.models.particle_dimer import ParticleDimer
-  params = ParticleDimer.params_default.copy()
-  params['dimer_slope'] = 2.0
-  dim_model = ParticleDimer(params=params)
-  return dim_model.energy_tf
+def linlogcut_tf(x, high_E=100, max_E=1e10):
+  """Function to clip large energies - taken from Frank Noe's deep_boltzmann package.
+  """
+  # cutoff x after max_E - this should also cutoff infinities
+  x = tf.where(x < max_E, x, max_E * tf.ones(tf.shape(x)))
+  # log after high_E
+  y = high_E + tf.where(x < high_E, x - high_E, tf.math.log(x - high_E + 1))
+  # make sure everything is finite
+  y = tf.where(tf.math.is_finite(y), y, max_E * tf.ones(tf.shape(y)))
+  return y
+
+
+def dimerHamiltonian(conf, doClip=True):
+  u = _dim_model.energy_tf(conf)
+  if doClip:
+    return linlogcut_tf(u, high_E=10000, max_E=1e10)
+  else:
+    return u
 
 
 def gaussian_sampler(mean, logvar):
@@ -170,9 +192,30 @@ the price of having sharper gradients in your optimization.
   return tf.math.sigmoid(beta*(logits + tf.math.log(eps) - tf.math.log(1.0-eps)))
 
 
-def 
+def sampled_dimer_MSE_loss(true_confs, means, logvars, weight=1.0):
+  """Adds on sampling configuration from means and log variances to dimer energy calculation.
+Then compares energies of samples (reconstructions) to those of actual configurations via MSE.
+  """
+  recon_confs = gaussian_sampler(means, logvars)
+  recon_energy = dimerHamiltonian(recon_confs)
+  true_energy = dimerHamiltonian(true_confs)
+  return weight*tf.keras.losses.mse(true_energy, recon_energy)
 
 
+def sampled_lg_MSE_loss(true_confs, logits, weight=1.0, sample_beta=10.0,
+                        energy_params={mu:-2.0, eps:-1.0}):
+  """Samples (approximately) Bernoulli variables (zeros and ones) from given logits, then
+calculates energy and compares to energy of true configurations via MSE.
+  """
+  recon_confs = bernoulli_sampler(logits, beta=sample_beta)
+  recon_energy = latticeGasHamiltonian(recon_confs, **energy_params)
+  true_energy = latticeGasHamiltonian(true_confs, **energy_params)
+  return weight*tf.keras.losses.mse(true_energy, recon_energy)
+
+
+#Below function is very general, but not as convenient as the ones specific for dimer or LG
+#Those actually allow fluctuations to be included through sampling under the reparametrization
+#trick - in other words, the energy is handled differently for the true configs and recons
 def transform_MSE_loss(transform_fn=latticeGasHamiltonian,
                        func_params=[-2.0, -1.0],
                        activation=None,
