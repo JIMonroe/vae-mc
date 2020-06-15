@@ -470,7 +470,12 @@ def trainWeighted(model,
 
   print("Beginning training at: %s"%time.ctime())
 
-  pot_energy = losses.latticeGasHamiltonian
+  #pot_energy = losses.latticeGasHamiltonian
+  #For lattice gas, better to approximate random draw rather than take average
+  #Can accomplish this with Bernoulli version of reparametrization trick
+  def pot_energy(conf):
+    sample_conf = losses.bernoulli_sampler(conf)
+    return losses.latticeGasHamiltonian(conf, **energy_params)
   #params = ParticleDimer.params_default.copy()
   #params['dimer_slope'] = 2.0
   #dimer_model = ParticleDimer(params=params)
@@ -507,7 +512,7 @@ def trainWeighted(model,
         #Do this by setting activation='logits' in model because have to handle Jacobian there
         x_configs = model(z_sample, reverse=True)
         #Calculate the potential energy of the configurations
-        u_vals = beta*pot_energy(x_configs, **energy_params)
+        u_vals = beta*pot_energy(x_configs) #, **energy_params)
         u_vals_clipped = linlogcut_tf(u_vals, high_E=10000, max_E=1e10)
         #And calculate total loss
         loss_energy = tf.reduce_mean(u_vals_clipped)
