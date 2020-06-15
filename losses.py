@@ -80,10 +80,11 @@ def bernoulli_loss(true_images,
 #Essentially just a generalization of MSE loss
 #Does assume a diagonal covariance matrix
 def diag_gaussian_loss(true_vals,
-                       recon_means,
-                       recon_log_var):
+                       recon_info):
   """Computes the loss assuming a Gaussian distribution (with diagonal covariance matrix) for
 the probability distribution of the reconstruction model."""
+  recon_means = recon_info[0]
+  recon_log_var = recon_info[1]
   #Negative logP is represented below
   mse_term = 0.5*tf.square(true_vals - recon_means)*tf.exp(-recon_log_var)
   reg_term = 0.5*recon_log_var
@@ -180,7 +181,7 @@ means to do things like compute energies.
                )
 
 
-def bernoulli_sampler(logits, beta=10.0):
+def bernoulli_sampler(logits, beta=100.0):
   """Implements the reparametrization trick but (approximately) for a Bernoulli distribution
 (see Maddison, Mnih, and Teh, "The concrete distribution: A continuous relaxation fo discrete
 random variables," 2016 for more information. Essentially takes a logit (NOT a probability)
@@ -192,17 +193,19 @@ the price of having sharper gradients in your optimization.
   return tf.math.sigmoid(beta*(logits + tf.math.log(eps) - tf.math.log(1.0-eps)))
 
 
-def sampled_dimer_MSE_loss(true_confs, means, logvars, weight=1.0):
+def sampled_dimer_MSE_loss(true_confs, recon_info):
   """Adds on sampling configuration from means and log variances to dimer energy calculation.
 Then compares energies of samples (reconstructions) to those of actual configurations via MSE.
   """
+  means = recon_info[0]
+  logvars = recon_info[1]
   recon_confs = gaussian_sampler(means, logvars)
   recon_energy = dimerHamiltonian(recon_confs)
   true_energy = dimerHamiltonian(true_confs)
-  return weight*tf.keras.losses.mse(true_energy, recon_energy)
+  return tf.keras.losses.mse(true_energy, recon_energy)
 
 
-def sampled_lg_MSE_loss(true_confs, logits, weight=1.0, sample_beta=10.0,
+def sampled_lg_MSE_loss(true_confs, logits, sample_beta=100.0,
                         energy_params={'mu':-2.0, 'eps':-1.0}):
   """Samples (approximately) Bernoulli variables (zeros and ones) from given logits, then
 calculates energy and compares to energy of true configurations via MSE.
@@ -210,7 +213,7 @@ calculates energy and compares to energy of true configurations via MSE.
   recon_confs = bernoulli_sampler(logits, beta=sample_beta)
   recon_energy = latticeGasHamiltonian(recon_confs, **energy_params)
   true_energy = latticeGasHamiltonian(true_confs, **energy_params)
-  return weight*tf.keras.losses.mse(true_energy, recon_energy)
+  return tf.keras.losses.mse(true_energy, recon_energy)
 
 
 #Below function is very general, but not as convenient as the ones specific for dimer or LG

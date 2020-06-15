@@ -136,7 +136,8 @@ def trainCustom(model,
                 batch_size=64,
                 save_dir='vae_info',
                 overwrite=False,
-                extraLossFunc=None):
+                extraLossFunc=None,
+                extraLossWeight=1.0):
   """Trains a VAE model and saves the results in a way that the model can be fully reloaded.
 Uses a custom training loop rather than those built into the tf.keras.Model class.
 
@@ -179,9 +180,9 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #Would still like to provide a wrapper in dataloaders.py
   #Will make more generalizable in case data format changes
   #But, something weird with batching happens if you use keras loss functions
-  #trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
-  trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
-                                                 dset='all', permute=True)#, center_and_whiten=True)
+  trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
+  #trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
+  #                                               dset='all', permute=True)#, center_and_whiten=True)
   #trainData = dataloaders.raw_image_data(data_file)
   #trainData, valData = dataloaders.dsprites_data(batch_size, val_frac=0.01)
 
@@ -196,11 +197,11 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
                                       )
 
   #Specify the loss function we want to use
-  #loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True,
-  #                                reduction=tf.keras.losses.Reduction.SUM)
+  loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True,
+                                  reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = tf.keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = losses.ReconLoss()
-  loss_fn = losses.diag_gaussian_loss
+  #loss_fn = losses.diag_gaussian_loss
 
   print("Beginning training at: %s"%time.ctime())
 
@@ -214,11 +215,11 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
         ametric.reset_states()
       with tf.GradientTape() as tape:
         reconstructed = model(x_batch_train[0])
-        loss = loss_fn(x_batch_train[0], *reconstructed) / x_batch_train[0].shape[0]
+        loss = loss_fn(x_batch_train[0], reconstructed) / x_batch_train[0].shape[0]
         loss += sum(model.losses)
         if extraLossFunc is not None:
           extra_loss = tf.cast(extraLossFunc(x_batch_train[0], reconstructed), 'float32')
-          loss += extra_loss
+          loss += extraLossWeight*extra_loss
         else:
           extra_loss = 0.0
 
@@ -242,11 +243,11 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
     batchCount = 0.0
     for x_batch_val in valData:
       reconstructed = model(x_batch_val[0])
-      val_loss += loss_fn(x_batch_val[0], *reconstructed) / x_batch_val[0].shape[0]
+      val_loss += loss_fn(x_batch_val[0], reconstructed) / x_batch_val[0].shape[0]
       val_loss += sum(model.losses)
       if extraLossFunc is not None:
         extra_loss = tf.cast(extraLossFunc(x_batch_val[0], reconstructed), 'float32')
-        val_loss += extra_loss
+        val_loss += extraLossWeight*extra_loss
         val_extra_loss += extra_loss
       batchCount += 1.0
     val_loss /= batchCount
