@@ -80,7 +80,8 @@ def bernoulli_loss(true_images,
 #Essentially just a generalization of MSE loss
 #Does assume a diagonal covariance matrix
 def diag_gaussian_loss(true_vals,
-                       recon_info):
+                       recon_info,
+                       activation=None):
   """Computes the loss assuming a Gaussian distribution (with diagonal covariance matrix) for
 the probability distribution of the reconstruction model."""
   recon_means = recon_info[0]
@@ -91,7 +92,8 @@ the probability distribution of the reconstruction model."""
   #norm_term = 0.5*tf.math.log(2.0*np.pi)
   sum_terms = tf.reduce_sum(mse_term + reg_term, # + norm_term,
                             axis=np.arange(1, len(true_vals.shape)))
-  loss = tf.reduce_sum(sum_terms) #Summing loss over all samples to return
+  loss = sum_terms #tf.reduce_sum(sum_terms) #Summing loss over all samples to return
+  #Instead return per sample loss... use ReconLoss and reduction to set to sum or take mean
   return loss
 
 
@@ -135,7 +137,7 @@ def reconstruction_loss(loss_fn=bernoulli_loss,
   return calc_loss
 
 
-def latticeGasHamiltonian(conf, mu, eps):
+def latticeGasHamiltonian(conf, mu=-2.0, eps=-1.0):
   """Computes the Hamiltonian for a 2D lattice gas given an image - so if the
 image is 1's and 0's it makes sense. Really should be any number of images. If
 just have one, add a first dimension to it.
@@ -179,6 +181,16 @@ means to do things like compute energies.
   return tf.add(mean,
                 tf.exp(logvar / 2.0) * tf.random.normal(tf.shape(mean), 0, 1)
                )
+
+
+def binary_sampler(logits):
+  """Samples EXACTLY from a Bernoulli distribution rather than approximately. The gradient
+of this operation cannot be computed, so it will not contribute to a loss! This is only
+defined for convenience of drawing lattice gas configurations.
+  """
+  probs = tf.math.sigmoid(logits)
+  rand_vals = tf.random.uniform(probs.shape)
+  return tf.cast((probs > rand_vals), dtype='float32')
 
 
 def bernoulli_sampler(logits, beta=100.0):
