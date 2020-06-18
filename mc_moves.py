@@ -162,7 +162,7 @@ called with different styles of draws for z.
   #Draw a z value from P(z|x1)
   currZ, zLogProbX1 = zDrawLocal(vaeModel, currConfig)
   #Draw a new z value according to chosen distribution
-  newZ, z2LogProb = zDrawFunc(draw_type='direct')
+  newZ, z2LogProb = zDrawFunc(draw_type=zDrawType)
   #Now draw new configuration based on new z
   newConfig, logProbX2 = xDrawSimple(vaeModel, newZ, **samplerParams)
   newU = energyFunc(newConfig, **energyParams)
@@ -171,7 +171,7 @@ called with different styles of draws for z.
   #Calculate probability of drawing newZ from P(z|x2)
   newZ, zLogProbX2 = zDrawLocal(vaeModel, newConfig, zSel=newZ)
   #Calculate probability of drawing currZ from chosen distribution
-  currZ, z1LogProb = zDrawFunc(draw_type='direct', zSel=currZ)
+  currZ, z1LogProb = zDrawFunc(draw_type=zDrawType, zSel=currZ)
   #Calculate probability of drawing currConfig from currZ
   currConfig, logProbX1 = xDrawSimple(vaeModel, currZ, xSel=currConfig, **samplerParams)
 
@@ -184,6 +184,56 @@ called with different styles of draws for z.
   #if not np.all(np.isfinite([logprobFor, logprobRev, zLogProbFor, zLogProbRev])):
   print('Breakdown of log(P_acc):')
   print([logPacc, -B*(newU-currU), zLogProbX1, zLogProbX2, z2LogProb, z1LogProb, logProbX2, logProbX1])
+
+  return logPacc, newConfig, newU
+
+
+class zDrawFunc_wrap_InvNet(object):
+  """Based on data, wraps all functions to draw z values. Allows to precompute statistics
+given data so that don't have to redo every MC step. Also need to provide a InvNet model for
+interpreting the data.
+  """
+  def __init__(self, dat, inv_model):
+    z_model = inv_model(dat)
+    self.trueMean = tf.reduce_mean(z_model, axis=0)
+    self.trueLogVar = tf.math.log(tf.math.reduce_variance(z_model, axis=0))
+    self.minZ = self.trueMean-5*tf.exp(0.5*self.trueLogVar)
+    self.maxZ = self.trueMean+5*tf.exp(0.5*self.trueLogVar)
+
+  def __call__(self, draw_type='std_normal', zSel=None, nDraws=1):
+    if draw_type == 'std_normal':
+      return  zDrawNormal(tf.zeros(self.trueMean.shape),
+                          tf.zeros(self.trueLogVar.shape),
+                          zSel=zSel, nDraws=nDraws)
+    elif draw_type == 'normal':
+      return  zDrawNormal(self.trueMean, self.trueLogVar, zSel=zSel, nDraws=nDraws)
+    elif draw_type == 'uniform':
+      return zDrawUniform(self.minZ, self.maxZ, zSel=zSel, nDraws=nDraws)
+    else:
+      print('Draw style unknown.')
+      return None
+
+
+def moveInvNet(currConfig, currU, invModel, B, energyFunc, zDrawFunc, energyParams={}, zDrawType='normal'):
+  """Performs a MC move inspired by a VAE model. zDrawFunc should be a class that can be
+called with different styles of draws for z.
+  """
+  #Move in the forward direction
+  #Draw a z value from the specified distribution
+  newZ, zLogProbNew = zDrawFunc(draw_type=zDrawType)
+  #And generate new x from this z
+  newConfig = invModel(newZ, reverse=True).numpy()
+  newU = energyFunc(newConfig, **energyParams)
+
+  #Retrace steps in reverse direction
+  #Calculate probability of drawing old z value
+  currZ, zLogProbCurr = zDrawFunc(draw_type=zDrawType, zSel=invModel(currConfig).numpy())
+
+  #And that should lead back to the current configuration, so ready to calculate acceptance
+  logPacc = ( -B*(newU - currU)
+              + np.nan_to_num(zLogProbCurr - zLogProbNew) )
+  print('Breakdown of log(P_acc):')
+  print(logPacc, -B*(newU-currU), zLogProbNew, zLogProbCurr)
 
   return logPacc, newConfig, newU
 
