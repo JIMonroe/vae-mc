@@ -124,6 +124,22 @@ def compute_gaussian_kl(z_mean, z_logvar):
   return tf.reduce_mean(per_sample_kl)
 
 
+def estimate_gaussian_kl(tz, z, z_mean, z_logvar):
+  """Estimates KL divergence by taking average over batch for latent space with a
+normalizing flow. tz is the transformed coordinate, z the original, and z_mean and
+z_logvar the mean and log variance of the original z. Will assume that the underlying
+model for tz in the VAE framework is standard normal.
+  """
+  logp_z = -0.5*tf.reduce_sum(tf.square(z - z_mean)*tf.exp(-z_logvar)
+                              + z_logvar,
+                              #+ tf.math.log(2.0*np.pi),
+                              axis=1)
+  logp_tz = -0.5*tf.reduce_sum(tf.square(tz),
+                               #+ tf.math.log(2.0*np.pi),
+                               axis=1)
+  return tf.reduce_mean(logp_z - logp_tz)
+
+
 def reconstruction_loss(loss_fn=bernoulli_loss,
                         activation="logits"):
   """Wrapper that creates reconstruction loss."""

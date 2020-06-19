@@ -16,6 +16,7 @@
 Adapted from disentanglement_lib https://github.com/google-research/disentanglement_lib"""
 import numpy as np
 import tensorflow as tf
+import tensorflow_probability as tfp
 
 
 class SampleLatent(tf.keras.layers.Layer):
@@ -49,15 +50,16 @@ class FCEncoder(tf.keras.layers.Layer):
       variable log variances.
   """
 
-  def __init__(self, num_latent, name='encoder',
+  def __init__(self, num_latent, name='encoder', hidden_dim=1200,
                kernel_initializer='glorot_uniform', **kwargs):
     super(FCEncoder, self).__init__(name=name, **kwargs)
     self.num_latent = num_latent
+    self.hidden_dim = hidden_dim
     self.kernel_initializer = kernel_initializer
     self.flattened = tf.keras.layers.Flatten()
-    self.e1 = tf.keras.layers.Dense(1200, activation=tf.nn.relu, name="e1",
+    self.e1 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.relu, name="e1",
                                     kernel_initializer=self.kernel_initializer)
-    self.e2 = tf.keras.layers.Dense(1200, activation=tf.nn.relu, name="e2",
+    self.e2 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.relu, name="e2",
                                     kernel_initializer=self.kernel_initializer)
     self.means = tf.keras.layers.Dense(num_latent, activation=None,
                                        kernel_initializer=self.kernel_initializer)
@@ -166,15 +168,17 @@ class FCDecoder(tf.keras.layers.Layer):
   """
 
   def __init__(self, out_shape, name='decoder',
+               hidden_dim=1200,
                kernel_initializer='glorot_uniform',
                return_vars=False, **kwargs):
     super(FCDecoder, self).__init__(name=name, **kwargs)
     self.out_shape = out_shape
+    self.hidden_dim = hidden_dim
     self.kernel_initializer=kernel_initializer
     self.return_vars = return_vars
-    self.d1 = tf.keras.layers.Dense(1200, activation=tf.nn.tanh,
+    self.d1 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.tanh,
                                     kernel_initializer=self.kernel_initializer)
-    self.d2 = tf.keras.layers.Dense(1200, activation=tf.nn.tanh,
+    self.d2 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.tanh,
                                     kernel_initializer=self.kernel_initializer)
     #self.d3 = tf.keras.layers.Dense(1200, activation=tf.nn.tanh,
     #                                kernel_initializer=self.kernel_initializer)
@@ -266,5 +270,164 @@ class DeconvDecoder(tf.keras.layers.Layer):
     d5_out = self.d5(d4_out)
     d6_out = self.d6(d5_out)
     return tf.reshape(d6_out, (-1,) + self.out_shape)
+
+
+class FCEncoderFlow(tf.keras.layers.Layer):
+  """Fully connected encoder modified to output flow parameters
+  """
+
+  def __init__(self, num_latent, name='encoder',
+               hidden_dim = 1200,
+               kernel_initializer='glorot_uniform',
+               flow_net_params={'num_hidden':2, 'hidden_dim':200},
+               flow_mat_rank=1, **kwargs):
+    super(FCEncoderFlow, self).__init__(name=name, **kwargs)
+    self.num_latent = num_latent
+    self.hidden_dim = hidden_dim
+    self.kernel_initializer = kernel_initializer
+    self.flow_num_hidden = flow_net_params['num_hidden']
+    self.flow_hidden_dim = flow_net_params['hidden_dim']
+    self.flow_mat_rank = flow_mat_rank
+    self.flattened = tf.keras.layers.Flatten()
+    self.e1 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.relu, name="e1",
+                                    kernel_initializer=self.kernel_initializer)
+    self.e2 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.relu, name="e2",
+                                    kernel_initializer=self.kernel_initializer)
+    self.means = tf.keras.layers.Dense(num_latent, activation=None, name='means',
+                                       kernel_initializer=self.kernel_initializer)
+    self.log_var = tf.keras.layers.Dense(num_latent, activation=None, name='logvar',
+                                         kernel_initializer=self.kernel_initializer)
+    self.flow_U = []
+    self.flow_V = []
+    self.flow_b = []
+    self.flow_input_dims = [self.num_latent,] + self.flow_num_hidden*[self.flow_hidden_dim]
+    self.flow_output_dims = self.flow_num_hidden*[self.flow_hidden_dim] + [self.num_latent,]
+    for l in range(self.flow_num_hidden+1):
+      self.flow_U.append(tf.keras.layers.Dense(self.flow_output_dims[l]*self.flow_mat_rank,
+                                               activation=None,))
+                                               #kernel_intializer=self.kernel_initializer))
+      self.flow_V.append(tf.keras.layers.Dense(self.flow_input_dims[l]*self.flow_mat_rank,
+                                               activation=None,))
+                                               #kernel_intializer=self.kernel_initializer))
+      self.flow_b.append(tf.keras.layers.Dense(self.flow_output_dims[l],
+                                               activation=None,))
+                                               #kernel_intializer=self.kernel_initializer))
+
+  def call(self, input_tensor):
+    flattened_out = self.flattened(input_tensor)
+    e1_out = self.e1(flattened_out)
+    e2_out = self.e2(e1_out)
+    means_out = self.means(e2_out)
+    log_var_out = self.log_var(e2_out)
+    uv_out = []
+    b_out = []
+    for l in range(self.flow_num_hidden+1):
+      u_out = tf.reshape(self.flow_U[l](e2_out),
+                         (-1, self.flow_output_dims[l], self.flow_mat_rank))
+      v_out = tf.reshape(self.flow_V[l](e2_out),
+                         (-1, self.flow_mat_rank, self.flow_input_dims[l]))
+      uv_out.append(tf.matmul(u_out, v_out))
+      b_out.append(tf.reshape(self.flow_b[l](e2_out), (-1, self.flow_output_dims[l], 1)))
+    return means_out, log_var_out, uv_out, b_out
+
+
+class flow_net(tf.keras.layers.Layer):
+  """Neural network that specifies the integrand of the normalizing flow.
+     Similar to a dense neural net, but modified to have some parameters in each
+     layer depend on the initial encoding, as in Grathwohl, et al 2018 (FFJORD).
+  """
+
+  def __init__(self, data_dim, name='flow_net', num_hidden=2, hidden_dim=200,
+               kernel_initializer='glorot_normal', activation='softplus', **kwargs):
+    super(flow_net, self).__init__(name=name, **kwargs)
+    self.data_dim = data_dim
+    self.num_hidden = num_hidden
+    self.hidden_dim = hidden_dim
+    self.kernel_initializer = kernel_initializer
+    if activation == 'softplus':
+      self.activation = tf.nn.softplus
+    elif activation == 'relu':
+      self.activation = tf.nn.relu
+    elif activation == 'tanh':
+      self.activation = tf.nn.tanh
+    else:
+      print('Activation not recognized, setting to softplus')
+      self.activation = tf.nn.softplus
+    #Create layer weights
+    self.w = []
+    self.b = []
+    self.input_dims = [self.data_dim,] + self.num_hidden*[self.hidden_dim]
+    self.output_dims = self.num_hidden*[self.hidden_dim] + [self.data_dim,]
+    for l in range(self.num_hidden+1):
+      self.w.append(self.add_weight(shape=(self.output_dims[l], self.input_dims[l]),
+                    initializer=self.kernel_initializer,
+                    trainable=True))
+      self.b.append(self.add_weight(shape=(self.output_dims[l], 1),
+                    initializer=self.kernel_initializer,
+                    trainable=True))
+    #And set up layer-based parameters that are specified by the encoder
+    #Instead of inputing to function, make adjustable and create function to set them
+    self.uv_list = [0]*(self.num_hidden+1)
+    self.b_list = [0]*(self.num_hidden+1)
+
+  def set_uv_b(self, uv_list=None, b_list=None):
+    if uv_list is not None:
+      self.uv_list = uv_list
+    if b_list is not None:
+      self.b_list = b_list
+
+  def call(self, time, state,
+           uv_list=None, b_list=None):
+    #Need to take an argument "time" so works with tfp.bijectors.FFJORD
+    #Will not use this variable, though
+    del time
+    #Can optionally set uv and b by passing to this function
+    self.set_uv_b(uv_list=uv_list, b_list=b_list)
+    #Pass through layers to calculate output
+    out = tf.reshape(state, state.shape+(1,))
+    for l in range(self.num_hidden+1):
+      out = tf.matmul(self.w[l] + self.uv_list[l], out)
+      out = out + self.b[l] + self.b_list[l]
+      if l < self.num_hidden:
+        out = self.activation(out)
+    return tf.squeeze(out, axis=-1)
+
+
+class NormFlow(tf.keras.layers.Layer):
+  """Normalizing flow layer
+  """
+
+  def __init__(self, data_dim, name='flow_net', flow_time=1.0,
+               kernel_initializer='glorot_normal', flow_net_params={},
+               **kwargs):
+    super(NormFlow, self).__init__(name=name, **kwargs)
+    self.data_dim = data_dim
+    self.flow_time = flow_time
+    self.kernel_initializer = kernel_initializer
+    #Create the neural network that represents the flow kernel or integrand
+    self.kernel = flow_net(self.data_dim,
+                           kernel_initializer=self.kernel_initializer,
+                           **flow_net_params)
+    #And create the normalizing flow
+    self.flow = tfp.bijectors.FFJORD(self.kernel,
+                                     initial_time=0.0, final_time=self.flow_time,
+                                     trace_augmentation_fn=tfp.bijectors.ffjord.trace_jacobian_exact)
+
+  def call(self, input_tensor, uv_list=None, b_list=None, reverse=False):
+    #To include inputs from encoder, need to update them in our kernel
+    self.kernel.set_uv_b(uv_list=uv_list, b_list=b_list)
+    if not reverse:
+      #out = self.flow.forward(input_tensor)
+      #log_det = self.flow.forward_log_det_jacobian(input_tensor,
+      #                                             event_ndims=len(input_tensor.shape)-1)
+      out, log_det = self.flow._augmented_forward(input_tensor)
+    else:
+      #out = self.flow.inverse(input_tensor)
+      #log_det = self.flow.inverse_log_det_jacobian(input_tensor,
+      #                                             event_ndims=len(input_tensor.shape)-1)
+      out, log_det = self.flow._augmented_inverse(input_tensor)
+    #If use augmented call, should take half the time, but have to sum over log_det
+    log_det = tf.reduce_sum(log_det, axis=np.arange(1, len(input_tensor.shape)))
+    return out, log_det
 
 
