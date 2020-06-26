@@ -251,7 +251,7 @@ class FlowVAE(tf.keras.Model):
     self.num_latent = num_latent
     self.include_vars = include_vars
     #By default, use fully-connect (fc) architecture for neural nets
-    #Can switch to convolutional if specify arch='conv'
+    #Can switch to convolutional if specify arch='conv' (won't have flow, though)
     self.arch = arch
     flow_net_params = {'num_hidden':2, 'hidden_dim':200}
     if self.arch == 'conv':
