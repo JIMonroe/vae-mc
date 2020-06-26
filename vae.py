@@ -258,8 +258,13 @@ class FlowVAE(tf.keras.Model):
       self.encoder = architectures.ConvEncoder(num_latent)
       self.decoder = architectures.DeconvDecoder(data_shape)
     else:
-      self.encoder = architectures.FCEncoderFlow(num_latent, hidden_dim=1200,
-                                                 flow_net_params=flow_net_params)
+      #self.encoder = architectures.FCEncoderFlow(num_latent, hidden_dim=1200,
+      #                                           flow_net_params=flow_net_params)
+      #Issue with predicting parameters with encoder and passing along...
+      #Somehow these parameters aren't tracked when go through the ODE solver
+      #The explicitly added weights (w and b) in the kernel network do get tracked
+      #Must be something to do with variable scope or querying trainable parameters
+      self.encoder = architectures.FCEncoder(num_latent, hidden_dim=1200)
       self.decoder = architectures.FCDecoder(data_shape, return_vars=self.include_vars)
     self.sampler = architectures.SampleLatent()
     self.flow = architectures.NormFlow(num_latent, flow_net_params=flow_net_params)
@@ -270,9 +275,11 @@ class FlowVAE(tf.keras.Model):
     return 1.0*kl_loss
 
   def call(self, inputs):
-    z_mean, z_logvar, uv, b = self.encoder(inputs)
+    #z_mean, z_logvar, uv, b = self.encoder(inputs)
+    z_mean, z_logvar = self.encoder(inputs)
     z = self.sampler(z_mean, z_logvar)
-    tz, logdet = self.flow(z, uv_list=uv, b_list=b)
+    #tz, logdet = self.flow(z, uv_list=uv, b_list=b)
+    tz, logdet = self.flow(z)
     reconstructed = self.decoder(tz)
     #Note that if include_vars is True reconstructed will be a tuple of (means, log_vars)
     #Estimate the KL divergence - should return average KL over batch
