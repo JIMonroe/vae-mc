@@ -14,6 +14,7 @@
 
 """Library of neural network architectures used for constructing VAEs for images.
 Adapted from disentanglement_lib https://github.com/google-research/disentanglement_lib"""
+import copy
 import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
@@ -279,7 +280,7 @@ class FCEncoderFlow(tf.keras.layers.Layer):
   def __init__(self, num_latent, name='encoder',
                hidden_dim = 1200,
                kernel_initializer='glorot_uniform',
-               flow_net_params={'num_hidden':2, 'hidden_dim':200},
+               flow_net_params={'num_hidden':2, 'hidden_dim':200, 'nvp_split':False},
                flow_mat_rank=1, **kwargs):
     super(FCEncoderFlow, self).__init__(name=name, **kwargs)
     self.num_latent = num_latent
@@ -287,6 +288,7 @@ class FCEncoderFlow(tf.keras.layers.Layer):
     self.kernel_initializer = kernel_initializer
     self.flow_num_hidden = flow_net_params['num_hidden']
     self.flow_hidden_dim = flow_net_params['hidden_dim']
+    self.flow_nvp_split = flow_net_params['nvp_split']
     self.flow_mat_rank = flow_mat_rank
     self.flattened = tf.keras.layers.Flatten()
     self.e1 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.relu, name="e1",
@@ -301,7 +303,10 @@ class FCEncoderFlow(tf.keras.layers.Layer):
     self.flow_V = []
     self.flow_b = []
     self.flow_input_dims = [self.num_latent,] + self.flow_num_hidden*[self.flow_hidden_dim]
-    self.flow_output_dims = self.flow_num_hidden*[self.flow_hidden_dim] + [self.num_latent,]
+    if self.flow_nvp_split:
+      self.flow_output_dims = self.flow_num_hidden*[self.flow_hidden_dim] + [self.num_latent*2,]
+    else:
+      self.flow_output_dims = self.flow_num_hidden*[self.flow_hidden_dim] + [self.num_latent,]
     for l in range(self.flow_num_hidden+1):
       self.flow_U.append(tf.keras.layers.Dense(self.flow_output_dims[l]*self.flow_mat_rank,
                                                activation=None,))
@@ -335,10 +340,14 @@ class flow_net(tf.keras.layers.Layer):
   """Neural network that specifies the integrand of the normalizing flow.
      Similar to a dense neural net, but modified to have some parameters in each
      layer depend on the initial encoding, as in Grathwohl, et al 2018 (FFJORD).
+     Also adapted to work as neural net to predict scale and translation in RealNVP,
+     but with modification proposed in FFJORD paper to have global layer weights
+     that are output by the encoder (if you want).
   """
 
   def __init__(self, data_dim, name='flow_net', num_hidden=2, hidden_dim=200,
-               kernel_initializer='glorot_normal', activation='softplus', **kwargs):
+               kernel_initializer='glorot_normal', activation='softplus',
+               nvp_split=False, **kwargs):
     super(flow_net, self).__init__(name=name, **kwargs)
     self.data_dim = data_dim
     self.num_hidden = num_hidden
@@ -353,11 +362,17 @@ class flow_net(tf.keras.layers.Layer):
     else:
       print('Activation not recognized, setting to softplus')
       self.activation = tf.nn.softplus
+    self.nvp_split = nvp_split
     #Create layer weights
     self.w = []
     self.b = []
     self.input_dims = [self.data_dim,] + self.num_hidden*[self.hidden_dim]
-    self.output_dims = self.num_hidden*[self.hidden_dim] + [self.data_dim,]
+    #If for realNVP layer, want to double output and split at end
+    #This means realNVP scaling and translation computed by same neural net
+    if self.nvp_split:
+      self.output_dims = self.num_hidden*[self.hidden_dim] + [self.data_dim*2,]
+    else:
+      self.output_dims = self.num_hidden*[self.hidden_dim] + [self.data_dim,]
     for l in range(self.num_hidden+1):
       self.w.append(self.add_weight(shape=(self.output_dims[l], self.input_dims[l]),
                     initializer=self.kernel_initializer,
@@ -370,17 +385,38 @@ class flow_net(tf.keras.layers.Layer):
     self.uv_list = [0]*(self.num_hidden+1)
     self.b_list = [0]*(self.num_hidden+1)
 
-  def set_uv_b(self, uv_list=None, b_list=None):
+  def set_uv_b(self, uv_list=None, b_list=None, flip_sign=False):
     if uv_list is not None:
-      self.uv_list = uv_list
+      self.uv_list = copy.deepcopy(uv_list)
+      #How we do this depends on if using realNVP or not
+      if self.nvp_split:
+        if flip_sign:
+          self.uv_list[0] = self.uv_list[0][:, :, -self.data_dim:]
+          self.uv_list[-1] = self.uv_list[-1][:, -self.data_dim*2:, :]
+        else:
+          self.uv_list[0] = self.uv_list[0][:, :, :self.data_dim]
+          self.uv_list[-1] = self.uv_list[-1][:, :self.data_dim*2, :]
     if b_list is not None:
-      self.b_list = b_list
+      self.b_list = copy.deepcopy(b_list)
+      if self.nvp_split:
+        if flip_sign:
+          self.b_list[-1] = self.b_list[-1][:, -self.data_dim*2:, :]
+        else:
+          self.b_list[-1] = self.b_list[-1][:, :self.data_dim*2, :]
 
-  def call(self, time, state,
+  def call(self, time, state=None,
            uv_list=None, b_list=None):
     #Need to take an argument "time" so works with tfp.bijectors.FFJORD
     #Will not use this variable, though
-    del time
+    #So delete if we're using FFJORD
+    #But if we're using RealNVP, the first argument is actually the state
+    if isinstance(time, (int, float)) or len(time.shape) <= 1:
+      del time
+    else:
+      #State will have to be a tensor or array and will have to have at least dimension 2
+      #This is because the first dimension has to be batch size for tensorflow to work
+      #Time, on the other hand, will only have one dimension or be an int or float
+      state = time
     #Can optionally set uv and b by passing to this function
     self.set_uv_b(uv_list=uv_list, b_list=b_list)
     #Pass through layers to calculate output
@@ -390,17 +426,21 @@ class flow_net(tf.keras.layers.Layer):
       out = out + self.b[l] + self.b_list[l]
       if l < self.num_hidden:
         out = self.activation(out)
-    return tf.squeeze(out, axis=-1)
+    out = tf.squeeze(out, axis=-1)
+    if self.nvp_split:
+      return tf.split(out, 2, axis=-1)
+    else:
+      return out
 
 
-class NormFlow(tf.keras.layers.Layer):
-  """Normalizing flow layer
+class NormFlowFFJORD(tf.keras.layers.Layer):
+  """Normalizing flow layer using FFJORD.
   """
 
-  def __init__(self, data_dim, name='flow_net', flow_time=1.0,
+  def __init__(self, data_dim, name='ffjord_flow', flow_time=1.0,
                kernel_initializer='glorot_normal', flow_net_params={},
                **kwargs):
-    super(NormFlow, self).__init__(name=name, **kwargs)
+    super(NormFlowFFJORD, self).__init__(name=name, **kwargs)
     self.data_dim = data_dim
     self.flow_time = flow_time
     self.kernel_initializer = kernel_initializer
@@ -429,5 +469,57 @@ class NormFlow(tf.keras.layers.Layer):
     #If use augmented call, should take half the time, but have to sum over log_det
     log_det = tf.reduce_sum(log_det, axis=np.arange(1, len(input_tensor.shape)))
     return out, log_det
+
+
+class NormFlowRealNVP(tf.keras.layers.Layer):
+  """Normalizing flow layer user RealNVP.
+  """
+
+  def __init__(self, data_dim, name='realnvp_flow', num_blocks=4,
+               kernel_initializer='glorot_normal', flow_net_params={},
+               **kwargs):
+    super(NormFlowRealNVP, self).__init__(name=name, **kwargs)
+    self.data_dim = data_dim
+    self.num_blocks = num_blocks
+    self.kernel_initializer = kernel_initializer
+    #Want to create a neural network for the scale and shift transformations
+    #(one for each desired number of blocks - num_blocks should be at least 2)
+    #In case data_dim is not even, figure out lengths of split
+    self.split_lens = np.zeros(self.num_blocks, dtype=int)
+    self.split_lens[::2] = self.data_dim//2
+    self.split_lens[1::2] = self.data_dim - self.data_dim//2
+    self.net_list = []
+    self.block_list = []
+    #Make sure we're using RealNVP split
+    flow_net_params['nvp_split'] = True
+    for l in range(num_blocks):
+      #Will use same neural network to predict S and T by transforming inputs
+      #So nvp_split should be true for flow_net
+      self.net_list.append(flow_net(self.split_lens[l],
+                                    kernel_initializer=self.kernel_initializer,
+                                    **flow_net_params))
+      this_n_masked = ((-1)**(l+1))*(self.data_dim - self.split_lens[l])
+      self.block_list.append(tfp.bijectors.RealNVP(num_masked=this_n_masked,
+                                                   shift_and_log_scale_fn=self.net_list[l]))
+
+  def call(self, input_tensor, uv_list=None, b_list=None, reverse=False):
+    #To include inputs from encoder, need to update neural nets in all of our blocks
+    for i, net in enumerate(self.net_list):
+      net.set_uv_b(uv_list=uv_list, b_list=b_list, flip_sign=bool(i%2))
+    if not reverse:
+      out = input_tensor
+      log_det_sum = tf.zeros(input_tensor.shape[0])
+      for block in self.block_list:
+        log_det_sum += block.forward_log_det_jacobian(out,
+                                                      event_ndims=len(input_tensor.shape)-1)
+        out = block.forward(out)
+    else:
+      out = input_tensor
+      log_det_sum = tf.zeros(input_tensor.shape[0])
+      for block in self.block_list:
+        log_det_sum += block.inverse_log_det_jacobian(out,
+                                                      event_ndims=len(input_tensor.shape)-1)
+        out = block.inverse(out)
+    return out, log_det_sum
 
 
