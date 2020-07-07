@@ -375,11 +375,13 @@ class flow_net(tf.keras.layers.Layer):
       self.output_dims = self.num_hidden*[self.hidden_dim] + [self.data_dim,]
     for l in range(self.num_hidden+1):
       self.w.append(self.add_weight(shape=(self.output_dims[l], self.input_dims[l]),
-                    initializer=self.kernel_initializer,
-                    trainable=True))
+                                    name='w_%i'%l,
+                                    initializer=self.kernel_initializer,
+                                    trainable=True))
       self.b.append(self.add_weight(shape=(self.output_dims[l], 1),
-                    initializer=self.kernel_initializer,
-                    trainable=True))
+                                    name='b_%i'%l,
+                                    initializer=self.kernel_initializer,
+                                    trainable=True))
     #And set up layer-based parameters that are specified by the encoder
     #Instead of inputing to function, make adjustable and create function to set them
     self.uv_list = [0]*(self.num_hidden+1)
@@ -419,11 +421,17 @@ class flow_net(tf.keras.layers.Layer):
       state = time
     #Can optionally set uv and b by passing to this function
     self.set_uv_b(uv_list=uv_list, b_list=b_list)
+#    if uv_list is None:
+#      uv_list = [0]*(self.num_hidden+1)
+#    if b_list is None:
+#      b_list = [0]*(self.num_hidden+1)
     #Pass through layers to calculate output
     out = tf.reshape(state, state.shape+(1,))
     for l in range(self.num_hidden+1):
       out = tf.matmul(self.w[l] + self.uv_list[l], out)
       out = out + self.b[l] + self.b_list[l]
+#      out = tf.matmul(self.w[l] + uv_list[l], out)
+#      out = out + self.b[l] + b_list[l]
       if l < self.num_hidden:
         out = self.activation(out)
     out = tf.squeeze(out, axis=-1)
@@ -489,37 +497,88 @@ class NormFlowRealNVP(tf.keras.layers.Layer):
     self.split_lens[::2] = self.data_dim//2
     self.split_lens[1::2] = self.data_dim - self.data_dim//2
     self.net_list = []
-    self.block_list = []
+#    self.block_list = []
     #Make sure we're using RealNVP split
     flow_net_params['nvp_split'] = True
-    for l in range(num_blocks):
+    for l in range(self.num_blocks):
       #Will use same neural network to predict S and T by transforming inputs
       #So nvp_split should be true for flow_net
       self.net_list.append(flow_net(self.split_lens[l],
                                     kernel_initializer=self.kernel_initializer,
                                     **flow_net_params))
-      this_n_masked = ((-1)**(l+1))*(self.data_dim - self.split_lens[l])
-      self.block_list.append(tfp.bijectors.RealNVP(num_masked=this_n_masked,
-                                                   shift_and_log_scale_fn=self.net_list[l]))
+#      this_n_masked = ((-1)**(l+1))*(self.data_dim - self.split_lens[l])
+#      self.block_list.append(tfp.bijectors.RealNVP(num_masked=this_n_masked,
+#                                                   shift_and_log_scale_fn=self.net_list[l]))
 
   def call(self, input_tensor, uv_list=None, b_list=None, reverse=False):
     #To include inputs from encoder, need to update neural nets in all of our blocks
     for i, net in enumerate(self.net_list):
       net.set_uv_b(uv_list=uv_list, b_list=b_list, flip_sign=bool(i%2))
+    out = input_tensor
+    log_det_sum = tf.zeros(input_tensor.shape[0])
     if not reverse:
-      out = input_tensor
-      log_det_sum = tf.zeros(input_tensor.shape[0])
-      for block in self.block_list:
-        log_det_sum += block.forward_log_det_jacobian(out,
-                                                      event_ndims=len(input_tensor.shape)-1)
-        out = block.forward(out)
+      for l in range(self.num_blocks):
+        if l%2 == 0:
+          this_mask = out[:, -(self.data_dim - self.split_lens[l]):]
+#          this_uv = uv_list
+#          if uv_list is not None:
+#            this_uv[0] = uv_list[0][:, :, -(self.data_dim - self.split_lens[l]):]
+#            this_uv[-1] = uv_list[-1][:, -(self.data_dim - self.split_lens[l])*2:, :]
+#          this_b = b_list
+#          if b_list is not None:
+#            this_b[-1] = b_list[-1][:, -(self.data_dim - self.split_lens[l])*2:, :]
+          s_out, t_out = self.net_list[l](this_mask)#, uv_list=this_uv, b_list=this_b)
+          this_transform = out[:, :self.split_lens[l]]*tf.exp(s_out) + t_out
+          out = tf.concat([this_transform, this_mask], axis=1)
+        else:
+          this_mask = out[:, :(self.data_dim - self.split_lens[l])]
+#          this_uv = uv_list
+#          if uv_list is not None:
+#            this_uv[0] = uv_list[0][:, :, :(self.data_dim - self.split_lens[l])]
+#            this_uv[-1] = uv_list[-1][:, :(self.data_dim - self.split_lens[l])*2, :]
+#          this_b = b_list
+#          if b_list is not None:
+#            this_b[-1] = b_list[-1][:, :(self.data_dim - self.split_lens[l])*2, :]
+          s_out, t_out = self.net_list[l](this_mask)#, uv_list=this_uv, b_list=this_b)
+          this_transform = out[:, -self.split_lens[l]:]*tf.exp(s_out) + t_out
+          out = tf.concat([this_mask, this_transform], axis=1)
+        log_det_sum += tf.reduce_sum(s_out, axis=1)
+#      for block in self.block_list:
+#        log_det_sum += block.forward_log_det_jacobian(out,
+#                                                      event_ndims=len(input_tensor.shape)-1)
+#        out = block.forward(out)
     else:
-      out = input_tensor
-      log_det_sum = tf.zeros(input_tensor.shape[0])
-      for block in self.block_list:
-        log_det_sum += block.inverse_log_det_jacobian(out,
-                                                      event_ndims=len(input_tensor.shape)-1)
-        out = block.inverse(out)
+      #In reverse, go over transformation blocks backwards
+      for l in range(self.num_blocks-1, -1, -1):
+        if l%2 == 0:
+          this_mask = out[:, -(self.data_dim - self.split_lens[l]):]
+#          this_uv = uv_list
+#          if uv_list is not None:
+#            this_uv[0] = uv_list[0][:, :, -(self.data_dim - self.split_lens[l]):]
+#            this_uv[-1] = uv_list[-1][:, -(self.data_dim - self.split_lens[l])*2:, :]
+#          this_b = b_list
+#          if b_list is not None:
+#            this_b[-1] = b_list[-1][:, -(self.data_dim - self.split_lens[l])*2:, :]
+          s_out, t_out = self.net_list[l](this_mask)#, uv_list=this_uv, b_list=this_b)
+          this_transform = (out[:, :self.split_lens[l]] - t_out)*tf.exp(-s_out)
+          out = tf.concat([this_transform, this_mask], axis=1)
+        else:
+          this_mask = out[:, :(self.data_dim - self.split_lens[l])]
+#          this_uv = uv_list
+#          if uv_list is not None:
+#            this_uv[0] = uv_list[0][:, :, :(self.data_dim - self.split_lens[l])]
+#            this_uv[-1] = uv_list[-1][:, :(self.data_dim - self.split_lens[l])*2, :]
+#          this_b = b_list
+#          if b_list is not None:
+#            this_b[-1] = b_list[-1][:, :(self.data_dim - self.split_lens[l])*2, :]
+          s_out, t_out = self.net_list[l](this_mask)#, uv_list=this_uv, b_list=this_b)
+          this_transform = (out[:, -self.split_lens[l]:] - t_out)*tf.exp(-s_out)
+          out = tf.concat([this_mask, this_transform], axis=1)
+        log_det_sum -= tf.reduce_sum(s_out, axis=1)
+#      for block in self.block_list:
+#        log_det_sum += block.inverse_log_det_jacobian(out,
+#                                                      event_ndims=len(input_tensor.shape)-1)
+#        out = block.inverse(out)
     return out, log_det_sum
 
 
