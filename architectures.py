@@ -582,3 +582,89 @@ class NormFlowRealNVP(tf.keras.layers.Layer):
     return out, log_det_sum
 
 
+class DiscriminatorNet(tf.keras.layers.Layer):
+  """Discriminator network for use with Adversarial VAE (see Mescheder et al. 2017,
+"Adversarial Variational Bayes..." for details. Note that two inputs are expected, one
+for x and the second for z, the latent configuration.
+  """
+
+  def __init__(self, name='discriminator',
+               hidden_dim_x = 1200,
+               hidden_dim_z = 200,
+               kernel_initializer='glorot_uniform',
+               **kwargs):
+    super(DiscriminatorNet, self).__init__(name=name, **kwargs)
+    self.hidden_dim_x = hidden_dim_x
+    self.hidden_dim_z = hidden_dim_z
+    self.kernel_initializer = kernel_initializer
+    self.flattened = tf.keras.layers.Flatten()
+    self.dx1 = tf.keras.layers.Dense(self.hidden_dim_x, activation=tf.nn.relu, name="dx1",
+                                     kernel_initializer=self.kernel_initializer)
+    self.dx2 = tf.keras.layers.Dense(self.hidden_dim_x, activation=tf.nn.relu, name="dx2",
+                                     kernel_initializer=self.kernel_initializer)
+    self.dx3 = tf.keras.layers.Dense(self.hidden_dim_x, activation=None, name="dx3",
+                                     kernel_initializer=self.kernel_initializer)
+    self.dz1 = tf.keras.layers.Dense(self.hidden_dim_z, activation=tf.nn.relu, name="dz1",
+                                     kernel_initializer=self.kernel_initializer)
+    self.dz2 = tf.keras.layers.Dense(self.hidden_dim_z, activation=tf.nn.relu, name="dz2",
+                                     kernel_initializer=self.kernel_initializer)
+    #Last layer for z needs to have same shape as x
+    self.dz3 = tf.keras.layers.Dense(self.hidden_dim_x, activation=None, name="dz3",
+                                     kernel_initializer=self.kernel_initializer)
+
+  def call(self, x_input, z_input):
+    flat_x = self.flattened(x_input)
+    dx1_out = self.dx1(flat_x)
+    dx2_out = self.dx2(dx1_out)
+    x_out = self.dx3(dx2_out)
+    dz1_out = self.dz1(z_input)
+    dz2_out = self.dz2(dz1_out)
+    z_out = self.dz3(dz2_out)
+    out = tf.reduce_sum(x_out*z_out, axis=1)
+    return out
+
+
+class AdversarialEncoder(tf.keras.layers.Layer):
+  """Encoder for use with Adversarial VAE (Mescheder et al. 2017). Takes x configurations
+and draws random noise from a standard normal distribution that is also input to
+the encoder.
+  """
+
+  def __init__(self, num_latent, name='encoder',
+               hidden_dim_x = 1200,
+               hidden_dim_e = 200,
+               kernel_initializer='glorot_uniform',
+               **kwargs):
+    super(AdversarialEncoder, self).__init__(name=name, **kwargs)
+    self.num_latent = num_latent
+    self.hidden_dim_x = hidden_dim_x
+    self.hidden_dim_e = hidden_dim_e
+    self.kernel_initializer = kernel_initializer
+    self.flattened = tf.keras.layers.Flatten()
+    self.dx1 = tf.keras.layers.Dense(self.hidden_dim_x, activation=tf.nn.relu, name="dx1",
+                                     kernel_initializer=self.kernel_initializer)
+    self.dx2 = tf.keras.layers.Dense(self.hidden_dim_x, activation=tf.nn.relu, name="dx2",
+                                     kernel_initializer=self.kernel_initializer)
+    self.dx3 = tf.keras.layers.Dense(self.num_latent, activation=None, name="dx3",
+                                     kernel_initializer=self.kernel_initializer)
+    self.de1 = tf.keras.layers.Dense(self.hidden_dim_e, activation=tf.nn.relu, name="de1",
+                                     kernel_initializer=self.kernel_initializer)
+    self.de2 = tf.keras.layers.Dense(self.hidden_dim_e, activation=tf.nn.relu, name="de2",
+                                     kernel_initializer=self.kernel_initializer)
+    self.de3 = tf.keras.layers.Dense(self.num_latent, activation=None, name="de3",
+                                     kernel_initializer=self.kernel_initializer)
+
+  def call(self, x_input):
+    flat_x = self.flattened(x_input)
+    dx1_out = self.dx1(flat_x)
+    dx2_out = self.dx2(dx1_out)
+    x_out = self.dx3(dx2_out)
+    #Sample random noise from standard normal
+    e_input = tf.random.normal((x_input.shape[0], self.num_latent), 0, 1)
+    de1_out = self.de1(e_input)
+    de2_out = self.de2(de1_out)
+    e_out = self.de3(de2_out)
+    out = x_out*e_out + x_out + e_out
+    return out
+
+

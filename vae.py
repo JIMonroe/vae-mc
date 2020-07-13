@@ -245,11 +245,13 @@ class FlowVAE(tf.keras.Model):
 
   def __init__(self, data_shape, num_latent,
                name='flow_vae', arch='fc', include_vars=False,
+               beta=1.0,
                **kwargs):
     super(FlowVAE, self).__init__(name=name, **kwargs)
     self.data_shape = data_shape
     self.num_latent = num_latent
     self.include_vars = include_vars
+    self.beta = beta
     #By default, use fully-connect (fc) architecture for neural nets
     #Can switch to convolutional if specify arch='conv' (won't have flow, though)
     self.arch = arch
@@ -258,14 +260,14 @@ class FlowVAE(tf.keras.Model):
       self.encoder = architectures.ConvEncoder(num_latent)
       self.decoder = architectures.DeconvDecoder(data_shape)
     else:
-      self.encoder = architectures.FCEncoderFlow(num_latent, hidden_dim=1200,
-                                                 kernel_initializer='zeros',
-                                                 flow_net_params=flow_net_params)
+      #self.encoder = architectures.FCEncoderFlow(num_latent, hidden_dim=1200,
+      #                                           kernel_initializer='zeros',
+      #                                           flow_net_params=flow_net_params)
       #Issue with predicting parameters with encoder and passing along...
       #Somehow these parameters aren't tracked when go through the ODE solver
       #The explicitly added weights (w and b) in the kernel network do get tracked
       #Must be something to do with variable scope or querying trainable parameters
-      #self.encoder = architectures.FCEncoder(num_latent, hidden_dim=1200)
+      self.encoder = architectures.FCEncoder(num_latent, hidden_dim=1200)
       self.decoder = architectures.FCDecoder(data_shape, return_vars=self.include_vars)
     self.sampler = architectures.SampleLatent()
     self.flow = architectures.NormFlowRealNVP(num_latent, kernel_initializer='zeros',
@@ -273,15 +275,15 @@ class FlowVAE(tf.keras.Model):
 
   def regularizer(self, kl_loss, z_mean, z_logvar, z_sampled):
     del z_mean, z_logvar, z_sampled
-    #For basic VAE, just return kl_loss (i.e. beta=1)
-    return 1.0*kl_loss
+    #For basic VAE, beta = 1.0, but want ability to change it
+    return self.beta * kl_loss
 
   def call(self, inputs):
-    z_mean, z_logvar, uv, b = self.encoder(inputs)
-    #z_mean, z_logvar = self.encoder(inputs)
+    #z_mean, z_logvar, uv, b = self.encoder(inputs)
+    z_mean, z_logvar = self.encoder(inputs)
     z = self.sampler(z_mean, z_logvar)
-    tz, logdet = self.flow(z, uv_list=uv, b_list=b)
-    #tz, logdet = self.flow(z)
+    #tz, logdet = self.flow(z, uv_list=uv, b_list=b)
+    tz, logdet = self.flow(z)
     reconstructed = self.decoder(tz)
     #Note that if include_vars is True reconstructed will be a tuple of (means, log_vars)
     #Estimate the KL divergence - should return average KL over batch
@@ -289,6 +291,43 @@ class FlowVAE(tf.keras.Model):
     #And subtract the average log determinant for the flow transformation
     kl_loss -= tf.reduce_mean(logdet)
     reg_loss = self.regularizer(kl_loss, z_mean, z_logvar, z)
+    #Add losses within here - keeps code cleaner and less confusing
+    self.add_loss(reg_loss)
+    self.add_metric(tf.reduce_mean(kl_loss), name='kl_loss', aggregation='mean')
+    self.add_metric(tf.reduce_mean(reg_loss), name='regularizer_loss', aggregation='mean')
+    return reconstructed
+
+
+class AdversarialVAE(tf.keras.Model):
+  """VAE with adversarial discriminator instead of analytic KL loss."""
+
+  def __init__(self, data_shape, num_latent,
+               name='ad_vae', include_vars=False,
+               beta=1.0,
+               **kwargs):
+    super(FlowVAE, self).__init__(name=name, **kwargs)
+    self.data_shape = data_shape
+    self.num_latent = num_latent
+    self.include_vars = include_vars
+    self.beta = beta
+    self.encoder = architectures.AdversarialEncoder(num_latent,
+                                                    hidden_dim_x=1200, hidden_dim_e=200)
+    self.decoder = architectures.FCDecoder(data_shape, return_vars=self.include_vars)
+    self.discriminator = architectures.DiscriminatorNet(hidden_dim_x=1200, hidden_dim_z=200)
+
+  def regularizer(self, kl_loss):
+    #For basic VAE, beta = 1.0, but want ability to change it
+    return self.beta * kl_loss
+
+  def call(self, inputs):
+    #Encoder here generates random numbers, so do not need sampler
+    #It then outputs a z value from a black-box distribution
+    z = self.encoder(inputs)
+    reconstructed = self.decoder(z)
+    #Note that if include_vars is True reconstructed will be a tuple of (means, log_vars)
+    #Compute the discriminator value, which should represent the KL divergence if well trained
+    kl_loss = tf.reduce_mean(self.discriminator(x, z))
+    reg_loss = self.regularizer(kl_loss, z)
     #Add losses within here - keeps code cleaner and less confusing
     self.add_loss(reg_loss)
     self.add_metric(tf.reduce_mean(kl_loss), name='kl_loss', aggregation='mean')
