@@ -10,12 +10,13 @@ def getLatentDists(model, dat, doPlot=False, dataDraws=1, returnSample=False):
 Assumes a factored Gaussian distribution, so returns means and standard deviation.
   """
   zMeans, zLogvars = model.encoder(dat)
-  zSample = np.zeros((dataDraws*dat.shape[0], model.num_latent))
+  zSample = np.zeros((dataDraws*dat.shape[0], model.num_latent), dtype='float32')
   for i in range(dataDraws):
     zSample[i*dat.shape[0]:(i+1)*dat.shape[0],:] = model.sampler(zMeans, zLogvars).numpy()
 
   try:
-    zSample, log_det = model.flow(zSample).numpy()
+    zSample, log_det = model.flow(zSample)
+    zSample = zSample.numpy()
   except AttributeError:
     pass
 

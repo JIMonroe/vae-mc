@@ -483,8 +483,8 @@ class NormFlowRealNVP(tf.keras.layers.Layer):
   """Normalizing flow layer user RealNVP.
   """
 
-  def __init__(self, data_dim, name='realnvp_flow', num_blocks=4,
-               kernel_initializer='glorot_normal', flow_net_params={},
+  def __init__(self, data_dim, name='realnvp_flow', num_blocks=8,
+               kernel_initializer='truncated_normal', flow_net_params={},
                **kwargs):
     super(NormFlowRealNVP, self).__init__(name=name, **kwargs)
     self.data_dim = data_dim

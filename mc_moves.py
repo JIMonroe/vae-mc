@@ -49,6 +49,8 @@ def zDrawDirect(dat_means, dat_logvars, zSel=None, nDraws=1, flow=None):
 Of course assuming that the sampling is from a normal distribution.
   """
   if zSel is not None:
+    if flow is not None:
+      zSel, sel_log_det_rev = flow(zSel, reverse=True)
     if nDraws == 1:
       zval = zSel
     else:
@@ -90,6 +92,10 @@ interpreting the data.
                                                  - tf.square(self.trueMean), axis=0))
     self.minZ = self.trueMean-5*tf.exp(0.5*self.trueLogVar)
     self.maxZ = self.trueMean+5*tf.exp(0.5*self.trueLogVar)
+    try:
+      self.flow = vae_model.flow
+    except AttributeError:
+      self.flow = None
 
   def __call__(self, draw_type='std_normal', zSel=None, nDraws=1):
     if draw_type == 'std_normal':
@@ -101,12 +107,8 @@ interpreting the data.
     elif draw_type == 'uniform':
       return zDrawUniform(self.minZ, self.maxZ, zSel=zSel, nDraws=nDraws)
     elif draw_type == 'direct':
-      try:
         return zDrawDirect(self.zMeans, self.zLogvars,
-                           zSel=zSel, nDraws=nDraws, flow=vae_model.flow)
-      except AttributeError:
-        return zDrawDirect(self.zMeans, self.zLogvars,
-                           zSel=zSel, nDraws=nDraws, flow=None)
+                           zSel=zSel, nDraws=nDraws, flow=self.flow)
     else:
       print('Draw style unknown.')
       return None
@@ -120,6 +122,10 @@ and calculate its probability given x.
   #Generate the mean and log variance of the normal distribution for z given x
   zMean, zLogvar = vae_model.encoder(tf.reshape(tf.cast(x, 'float32'), (1,)+x.shape+(1,)))
   if zSel is not None:
+    try:
+      zSel, sel_log_det_rev = vae_model.flow(zSel, reverse=True)
+    except AttributeError:
+      pass
     if nDraws == 1:
       zval = zSel
     else:
