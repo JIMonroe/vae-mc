@@ -305,7 +305,7 @@ class AdversarialVAE(tf.keras.Model):
                name='ad_vae', include_vars=False,
                beta=1.0,
                **kwargs):
-    super(FlowVAE, self).__init__(name=name, **kwargs)
+    super(AdversarialVAE, self).__init__(name=name, **kwargs)
     self.data_shape = data_shape
     self.num_latent = num_latent
     self.include_vars = include_vars
@@ -325,9 +325,9 @@ class AdversarialVAE(tf.keras.Model):
     z = self.encoder(inputs)
     reconstructed = self.decoder(z)
     #Note that if include_vars is True reconstructed will be a tuple of (means, log_vars)
-    #Compute the discriminator value, which should represent the KL divergence if well trained
-    kl_loss = tf.reduce_mean(self.discriminator(x, z))
-    reg_loss = self.regularizer(kl_loss, z)
+    #Compute the discriminator value, which should represent the KL divergence if well-trained
+    kl_loss = tf.reduce_mean(self.discriminator(inputs, z))
+    reg_loss = self.regularizer(kl_loss)
     #Add losses within here - keeps code cleaner and less confusing
     self.add_loss(reg_loss)
     self.add_metric(tf.reduce_mean(kl_loss), name='kl_loss', aggregation='mean')

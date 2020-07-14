@@ -14,6 +14,11 @@ Assumes a factored Gaussian distribution, so returns means and standard deviatio
   for i in range(dataDraws):
     zSample[i*dat.shape[0]:(i+1)*dat.shape[0],:] = model.sampler(zMeans, zLogvars).numpy()
 
+  try:
+    zSample, log_det = model.flow(zSample).numpy()
+  except AttributeError:
+    pass
+
   if doPlot:
     distFig, distAx = plt.subplots()
     for i in range(model.num_latent):

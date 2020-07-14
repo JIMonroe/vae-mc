@@ -44,7 +44,7 @@ def zDrawUniform(minZ, maxZ, zSel=None, nDraws=1):
   return zval, zlogprob
 
 
-def zDrawDirect(dat_means, dat_logvars, zSel=None, nDraws=1):
+def zDrawDirect(dat_means, dat_logvars, zSel=None, nDraws=1, flow=None):
   """Draws a z value from a sample of z means and log variances output by the encoder.
 Of course assuming that the sampling is from a normal distribution.
   """
@@ -71,6 +71,9 @@ Of course assuming that the sampling is from a normal distribution.
                                  - 0.5*np.log(2.0*np.pi) - 0.5*dat_logvars, axis=1)
   zlogprob = zlogprob - tf.math.log(tf.cast(dat_means.shape[0], 'float32'))
   zlogprob = tf.reduce_sum(zlogprob, axis=1).numpy()
+  if flow is not None:
+    zval, log_det = flow(zval)
+    zlogprob -= log_det.numpy()
   return zval, zlogprob
 
 
@@ -98,7 +101,12 @@ interpreting the data.
     elif draw_type == 'uniform':
       return zDrawUniform(self.minZ, self.maxZ, zSel=zSel, nDraws=nDraws)
     elif draw_type == 'direct':
-      return zDrawDirect(self.zMeans, self.zLogvars, zSel=zSel, nDraws=nDraws)
+      try:
+        return zDrawDirect(self.zMeans, self.zLogvars,
+                           zSel=zSel, nDraws=nDraws, flow=vae_model.flow)
+      except AttributeError:
+        return zDrawDirect(self.zMeans, self.zLogvars,
+                           zSel=zSel, nDraws=nDraws, flow=None)
     else:
       print('Draw style unknown.')
       return None
@@ -121,6 +129,11 @@ and calculate its probability given x.
     zval = vae_model.sampler(tf.tile(zMean, (nDraws,1)), tf.tile(zLogvar, (nDraws,1)))
   zlogprob = tf.reduce_sum( -0.5*tf.math.square(zval - zMean)/tf.math.exp(zLogvar)
                             - 0.5*np.log(2.0*np.pi) - 0.5*zLogvar, axis=1).numpy()
+  try:
+    zval, log_det = vae_model.flow(zval)
+    zlogprob -= log_det.numpy()
+  except AttributeError:
+    pass
   return zval, zlogprob
 
 
