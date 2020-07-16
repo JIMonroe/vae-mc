@@ -5,6 +5,7 @@
 
 import os
 import time
+import copy
 from libVAE import dataloaders, losses, vae
 import numpy as np
 import tensorflow as tf
@@ -137,7 +138,8 @@ def trainCustom(model,
                 save_dir='vae_info',
                 overwrite=False,
                 extraLossFunc=None,
-                extraLossWeight=1.0):
+                extraLossWeight=1.0,
+                anneal_beta_val=None):
   """Trains a VAE model and saves the results in a way that the model can be fully reloaded.
 Uses a custom training loop rather than those built into the tf.keras.Model class.
 
@@ -149,6 +151,8 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
     save_dir: String with path to directory to save to
     overwrite: Boolean determining whether data is overwritten
     extraLossFunc: Additional loss function to add (for example potential energies)
+    extraLossWeight: Weighting factor for the extra loss function
+    anneal_beta_val: Final value for beta (changes with each epoch, starts with what model is at)
   """
 
   #Check if the directory exists
@@ -205,11 +209,24 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   loss_fn = losses.ReconLoss(loss_fn=losses.diag_gaussian_loss, activation=None,
                              reduction=tf.keras.losses.Reduction.SUM)
 
+  #Set up annealing (if desired and have beta)
+  if anneal_beta_val is not None:
+    try:
+      original_beta = copy.deepcopy(model.beta)
+    except AttributeError:
+      print("Annealing turned on but model has no beta parameter, turning off.")
+      anneal_beta_val = None
+
   print("Beginning training at: %s"%time.ctime())
 
   #Loop over epochs
   for epoch in range(num_epochs):
-    print('\nOn epoch %d:'%epoch)
+
+    #Anneal for this step (starts out not changed, i.e., adding zero, ends at anneal_beta_val)
+    if anneal_beta_val is not None:
+      model.beta = (anneal_beta_val - original_beta)*epoch/(num_epochs - 1)
+
+    print('\nOn epoch %d (beta=%f):'%(epoch, model.beta))
 
     #Iterate over batches in the dataset
     for step, x_batch_train in enumerate(trainData):

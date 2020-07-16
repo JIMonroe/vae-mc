@@ -308,7 +308,7 @@ their paper 'Variational Lossy Autoencoder.'
                name='priorflow_vae', arch='fc', include_vars=False,
                beta=1.0,
                **kwargs):
-    super(FlowVAE, self).__init__(name=name, **kwargs)
+    super(PriorFlowVAE, self).__init__(name=name, **kwargs)
     self.data_shape = data_shape
     self.num_latent = num_latent
     self.include_vars = include_vars
@@ -348,9 +348,8 @@ their paper 'Variational Lossy Autoencoder.'
     z_prior, logdet = self.flow(z, reverse=True)
     #Estimate the KL divergence - should return average KL over batch
     kl_loss = losses.estimate_gaussian_kl(z_prior, z, z_mean, z_logvar)
-    #And ADD the average log determinant for the flow transformation
-    #Addition because the flow acts on the prior here and in the reverse direction of the flow
-    kl_loss += tf.reduce_mean(logdet)
+    #And SUBTRACT the average log determinant for the flow transformation
+    kl_loss -= tf.reduce_mean(logdet)
     reg_loss = self.regularizer(kl_loss, z_mean, z_logvar, z)
     #Add losses within here - keeps code cleaner and less confusing
     self.add_loss(reg_loss)
