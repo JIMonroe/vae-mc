@@ -572,3 +572,121 @@ the discriminator network should be trained.
   #model.save(os.path.join(save_dir, 'model'), save_format='tf')
 
 
+def trainPriorFlowKL(model,
+                     data_file,
+                     num_epochs=2,
+                     batch_size=64,
+                     save_dir='vae_info',
+                     overwrite=False):
+  """Trains JUST THE FLOW of a PriorFlowVAE model based on KL divergence.
+
+  Args:
+    model: the VAE model object to train and save
+    data_file: a file containing the data for training/validation
+    num_epochs: Integer with number of epochs to train (each is over all samples)
+    batch_size: Integer with the batch size
+    save_dir: String with path to directory to save to
+    overwrite: Boolean determining whether data is overwritten
+  """
+
+  #Check if the directory exists
+  #If so, assume continuation and load model weights
+  if os.path.isdir(save_dir):
+    #If overwrite is True, don't need to do anything
+    #If it's False, create a new directory to save to
+    if not overwrite:
+      print("Found saved model at %s and overwrite is False."%save_dir)
+      print("Will attempt to load and continue training.")
+      model.load_weights(os.path.join(save_dir, 'training.ckpt'))
+      #print(model.summary())
+      try:
+        dir_split = save_dir.split('_')
+        train_num = int(dir_split[-1])
+        save_dir = '%s_%i'%("_".join(dir_split[:-1]), train_num+1)
+      except ValueError:
+        save_dir = '%s_1'%(save_dir)
+      os.mkdir(save_dir)
+  #If not, create that directory to save to later
+  else:
+    os.mkdir(save_dir)
+
+  print("Model set up and ready to train.")
+
+  #Want to load in data
+  #trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
+  trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
+                                                 dset='all', permute=True)#, center_and_whiten=True)
+  #trainData = dataloaders.raw_image_data(data_file)
+  #trainData, valData = dataloaders.dsprites_data(batch_size, val_frac=0.01)
+
+  #Set up path for checkpoint files
+  checkpoint_path = os.path.join(save_dir, 'training.ckpt')
+
+  #Create an optimizer to use based on hyperparameters in https://github.com/google-research/disentanglement_lib 
+  optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001,
+                                       beta_1=0.9,
+                                       beta_2=0.999,
+                                       epsilon=1e-08,
+                                      )
+
+  #Specify a loss function we want to use just as a check
+  #Will really just train based on KL divergence reported by model
+  #loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True,
+  #                                reduction=tf.keras.losses.Reduction.SUM)
+  #loss_fn = tf.keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
+  #loss_fn = losses.ReconLoss()
+  #loss_fn = losses.diag_gaussian_loss
+  loss_fn = losses.ReconLoss(loss_fn=losses.diag_gaussian_loss, activation=None,
+                             reduction=tf.keras.losses.Reduction.SUM)
+
+  print("Beginning training at: %s"%time.ctime())
+
+  #Loop over epochs
+  for epoch in range(num_epochs):
+    print('\nOn epoch %d:'%epoch)
+
+    #Iterate over batches in the dataset
+    for step, x_batch_train in enumerate(trainData):
+      for ametric in model.metrics:
+        ametric.reset_states()
+      with tf.GradientTape() as tape:
+        reconstructed = model(x_batch_train[0])
+        kl_loss = sum(model.losses)
+
+      grads = tape.gradient(kl_loss, model.flow.trainable_weights)
+      optimizer.apply_gradients(zip(grads, model.flow.trainable_weights))
+
+      loss = loss_fn(x_batch_train[0], reconstructed) / x_batch_train[0].shape[0]
+
+      if step%100 == 0:
+        print('\tStep %i: loss=%f, model_loss=%f, kl_div=%f, reg_loss=%f, extra_loss=%f'
+              %(step, loss, kl_loss,
+                model.metrics[0].result(), model.metrics[1].result(), extra_loss))
+
+    #Save checkpoint after each epoch
+    print('\tEpoch finished, saving checkpoint.')
+    model.save_weights(checkpoint_path.format(epoch=epoch))
+
+    #Check against validation data
+    val_loss = tf.constant(0.0)
+    val_kl_loss = tf.constant(0.0)
+    for ametric in model.metrics:
+      ametric.reset_states()
+    batchCount = 0.0
+    for x_batch_val in valData:
+      reconstructed = model(x_batch_val[0])
+      val_loss += loss_fn(x_batch_val[0], reconstructed) / x_batch_val[0].shape[0]
+      val_kl_loss += sum(model.losses)
+      batchCount += 1.0
+    val_loss /= batchCount
+    val_kl_loss /= batchCount
+    print('\tValidation loss=%f, model_loss=%f, kl_div=%f, reg_loss=%f, extra_loss=%f'
+          %(val_loss, val_kl_loss,
+            model.metrics[0].result(), model.metrics[1].result(), val_extra_loss))
+
+  print("Training completed at: %s"%time.ctime())
+  print(model.summary())
+
+  #print(train_history.history)
+
+
