@@ -676,9 +676,9 @@ def trainPriorFlowKL(model,
       loss = loss_fn(x_batch_train[0], reconstructed) / x_batch_train[0].shape[0]
 
       if step%100 == 0:
-        print('\tStep %i: loss=%f, model_loss=%f, kl_div=%f, reg_loss=%f, extra_loss=%f'
+        print('\tStep %i: loss=%f, model_loss=%f, kl_div=%f, reg_loss=%f'
               %(step, loss, kl_loss,
-                model.metrics[0].result(), model.metrics[1].result(), extra_loss))
+                model.metrics[0].result(), model.metrics[1].result()))
 
     #Save checkpoint after each epoch
     print('\tEpoch finished, saving checkpoint.')
@@ -697,9 +697,9 @@ def trainPriorFlowKL(model,
       batchCount += 1.0
     val_loss /= batchCount
     val_kl_loss /= batchCount
-    print('\tValidation loss=%f, model_loss=%f, kl_div=%f, reg_loss=%f, extra_loss=%f'
+    print('\tValidation loss=%f, model_loss=%f, kl_div=%f, reg_loss=%f'
           %(val_loss, val_kl_loss,
-            model.metrics[0].result(), model.metrics[1].result(), val_extra_loss))
+            model.metrics[0].result(), model.metrics[1].result()))
 
   print("Training completed at: %s"%time.ctime())
   print(model.summary())
