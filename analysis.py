@@ -9,10 +9,15 @@ def getLatentDists(model, dat, doPlot=False, dataDraws=1, returnSample=False):
   """Determines the distribution of latent variables based on input data.
 Assumes a factored Gaussian distribution, so returns means and standard deviation.
   """
-  zMeans, zLogvars = model.encoder(dat)
   zSample = np.zeros((dataDraws*dat.shape[0], model.num_latent), dtype='float32')
-  for i in range(dataDraws):
-    zSample[i*dat.shape[0]:(i+1)*dat.shape[0],:] = model.sampler(zMeans, zLogvars).numpy()
+  try:
+    zMeans, zLogvars = model.encoder(dat)
+    for i in range(dataDraws):
+      zSample[i*dat.shape[0]:(i+1)*dat.shape[0],:] = model.sampler(zMeans, zLogvars).numpy()
+  except ValueError:
+    #If using adversarial VAE, will end up here because only returns z values (stochastically)
+    for i in range(dataDraws):
+      zSample[i*dat.shape[0]:(i+1)*dat.shape[0],:] = model.encoder(dat).numpy()
 
   try:
     zSample, log_det = model.flow(zSample)
@@ -39,11 +44,15 @@ Assumes a factored Gaussian distribution, so returns means and standard deviatio
   mean = np.average(zSample, axis=0)
   std = np.std(zSample, ddof=1, axis=0)
 
-  trueMean = tf.reduce_mean(zMeans, axis=0).numpy()
-  trueStd = np.sqrt(tf.reduce_mean(tf.math.exp(zLogvars)
-                                   + tf.square(zMeans) - tf.square(trueMean), axis=0))
-  #Technically NOT a sum of Gaussianly distributed random variables, but instead a
-  #sum of Gaussian distributions. So mean is average of means, but std is different.
+  try:
+    trueMean = tf.reduce_mean(zMeans, axis=0).numpy()
+    trueStd = np.sqrt(tf.reduce_mean(tf.math.exp(zLogvars)
+                                     + tf.square(zMeans) - tf.square(trueMean), axis=0))
+    #Technically NOT a sum of Gaussianly distributed random variables, but instead a
+    #sum of Gaussian distributions. So mean is average of means, but std is different.
+  except NameError:
+    trueMean = mean
+    trueStd = std
 
   print("Sampled mean versus mean mean:")
   print(mean)
@@ -55,7 +64,6 @@ Assumes a factored Gaussian distribution, so returns means and standard deviatio
   if returnSample:
     return trueMean, trueStd, zSample
   else:
-    #return mean, std
     return trueMean, trueStd
 
 

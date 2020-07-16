@@ -299,6 +299,66 @@ class FlowVAE(tf.keras.Model):
     return reconstructed
 
 
+class PriorFlowVAE(tf.keras.Model):
+  """VAE with normalizing flow on the prior, as suggested by Chen, et al. 2017 in
+their paper 'Variational Lossy Autoencoder.'
+  """
+
+  def __init__(self, data_shape, num_latent,
+               name='priorflow_vae', arch='fc', include_vars=False,
+               beta=1.0,
+               **kwargs):
+    super(FlowVAE, self).__init__(name=name, **kwargs)
+    self.data_shape = data_shape
+    self.num_latent = num_latent
+    self.include_vars = include_vars
+    self.beta = beta
+    #By default, use fully-connect (fc) architecture for neural nets
+    #Can switch to convolutional if specify arch='conv' (won't have flow, though)
+    self.arch = arch
+    flow_net_params = {'num_hidden':2, 'hidden_dim':200, 'nvp_split':True, 'activation':'relu'}
+    if self.arch == 'conv':
+      self.encoder = architectures.ConvEncoder(num_latent)
+      self.decoder = architectures.DeconvDecoder(data_shape)
+    else:
+      self.encoder = architectures.FCEncoder(num_latent, hidden_dim=1200)
+      self.decoder = architectures.FCDecoder(data_shape, return_vars=self.include_vars)
+    self.sampler = architectures.SampleLatent()
+    self.flow = architectures.NormFlowRealNVP(num_latent,
+                                              kernel_initializer='truncated_normal',
+                                              flow_net_params=flow_net_params,
+                                              num_blocks=4)
+
+  def regularizer(self, kl_loss, z_mean, z_logvar, z_sampled):
+    del z_mean, z_logvar, z_sampled
+    #For basic VAE, beta = 1.0, but want ability to change it
+    return self.beta * kl_loss
+
+  def call(self, inputs):
+    z_mean, z_logvar = self.encoder(inputs)
+    z = self.sampler(z_mean, z_logvar)
+    #With flow only on prior, z passes directly through
+    reconstructed = self.decoder(z)
+    #Note that if include_vars is True reconstructed will be a tuple of (means, log_vars)
+    #Before estimating KL divergence, pass z through inverse flow
+    #(forward flow is used during generation from a standard normal)
+    #May not actually need to do this DURING training... may be able to do after - will check
+    #If do after, MUST do really well before actually using model in MC simulations
+    #Feels weird, though, because if don't do, completely leave off KL term...
+    z_prior, logdet = self.flow(z, reverse=True)
+    #Estimate the KL divergence - should return average KL over batch
+    kl_loss = losses.estimate_gaussian_kl(z_prior, z, z_mean, z_logvar)
+    #And ADD the average log determinant for the flow transformation
+    #Addition because the flow acts on the prior here and in the reverse direction of the flow
+    kl_loss += tf.reduce_mean(logdet)
+    reg_loss = self.regularizer(kl_loss, z_mean, z_logvar, z)
+    #Add losses within here - keeps code cleaner and less confusing
+    self.add_loss(reg_loss)
+    self.add_metric(tf.reduce_mean(kl_loss), name='kl_loss', aggregation='mean')
+    self.add_metric(tf.reduce_mean(reg_loss), name='regularizer_loss', aggregation='mean')
+    return reconstructed
+
+
 class AdversarialVAE(tf.keras.Model):
   """VAE with adversarial discriminator instead of analytic KL loss."""
 
