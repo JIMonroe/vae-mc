@@ -255,7 +255,8 @@ class FlowVAE(tf.keras.Model):
     #By default, use fully-connect (fc) architecture for neural nets
     #Can switch to convolutional if specify arch='conv' (won't have flow, though)
     self.arch = arch
-    flow_net_params = {'num_hidden':2, 'hidden_dim':200, 'nvp_split':True, 'activation':'relu'}
+    flow_net_params = {'num_hidden':2, 'hidden_dim':200,
+                       'nvp_split':True, 'activation':tf.nn.relu}
     if self.arch == 'conv':
       self.encoder = architectures.ConvEncoder(num_latent)
       self.decoder = architectures.DeconvDecoder(data_shape)
@@ -280,10 +281,8 @@ class FlowVAE(tf.keras.Model):
     return self.beta * kl_loss
 
   def call(self, inputs):
-    #z_mean, z_logvar, uv, b = self.encoder(inputs)
     z_mean, z_logvar = self.encoder(inputs)
     z = self.sampler(z_mean, z_logvar)
-    #tz, logdet = self.flow(z, uv_list=uv, b_list=b)
     tz, logdet = self.flow(z)
     reconstructed = self.decoder(tz)
     #Note that if include_vars is True reconstructed will be a tuple of (means, log_vars)
@@ -316,7 +315,8 @@ their paper 'Variational Lossy Autoencoder.'
     #By default, use fully-connect (fc) architecture for neural nets
     #Can switch to convolutional if specify arch='conv' (won't have flow, though)
     self.arch = arch
-    flow_net_params = {'num_hidden':2, 'hidden_dim':200, 'nvp_split':True, 'activation':'relu'}
+    flow_net_params = {'num_hidden':2, 'hidden_dim':200,
+                       'nvp_split':True, 'activation':tf.nn.relu}
     if self.arch == 'conv':
       self.encoder = architectures.ConvEncoder(num_latent)
       self.decoder = architectures.DeconvDecoder(data_shape)
