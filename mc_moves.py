@@ -93,7 +93,10 @@ interpreting the data.
     self.minZ = self.trueMean-5*tf.exp(0.5*self.trueLogVar)
     self.maxZ = self.trueMean+5*tf.exp(0.5*self.trueLogVar)
     try:
-      self.flow = vae_model.flow
+      if 'prior' not in vae_model.name:
+        self.flow = vae_model.flow
+      else:
+        self.flow = None
     except AttributeError:
       self.flow = None
 
@@ -123,7 +126,8 @@ and calculate its probability given x.
   zMean, zLogvar = vae_model.encoder(tf.reshape(tf.cast(x, 'float32'), (1,)+x.shape+(1,)))
   if zSel is not None:
     try:
-      zSel, sel_log_det_rev = vae_model.flow(zSel, reverse=True)
+      if 'prior' not in vae_model.name:
+        zSel, sel_log_det_rev = vae_model.flow(zSel, reverse=True)
     except AttributeError:
       pass
     if nDraws == 1:
@@ -136,8 +140,9 @@ and calculate its probability given x.
   zlogprob = tf.reduce_sum( -0.5*tf.math.square(zval - zMean)/tf.math.exp(zLogvar)
                             - 0.5*np.log(2.0*np.pi) - 0.5*zLogvar, axis=1).numpy()
   try:
-    zval, log_det = vae_model.flow(zval)
-    zlogprob -= log_det.numpy()
+    if 'prior' not in vae_model.name:
+      zval, log_det = vae_model.flow(zval)
+      zlogprob -= log_det.numpy()
   except AttributeError:
     pass
   return zval, zlogprob

@@ -20,8 +20,9 @@ Assumes a factored Gaussian distribution, so returns means and standard deviatio
       zSample[i*dat.shape[0]:(i+1)*dat.shape[0],:] = model.encoder(dat).numpy()
 
   try:
-    zSample, log_det = model.flow(zSample)
-    zSample = zSample.numpy()
+    if 'prior' not in model.name:
+      zSample, log_det = model.flow(zSample)
+      zSample = zSample.numpy()
   except AttributeError:
     pass
 
