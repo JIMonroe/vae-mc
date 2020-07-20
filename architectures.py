@@ -730,6 +730,96 @@ class NormFlowRealNVP(tf.keras.layers.Layer):
 #     return out, log_det_sum
 
 
+class SplineBijector(tf.keras.layers.Layer):
+  """Follows tfp example for using rational quadratic splines (as described in Durkan et al.
+2019) to replace affine transformations (in, say, RealNVP). This should allow more flexible
+transformations with similar cost and should work much better with 1D flows.
+  """
+
+  def _bin_positions(self, x):
+    x = tf.reshape(x, [-1, self.num_bins])
+    return tf.math.softmax(x, axis=-1)*(2 - self.num_bins*1e-2) + 1e-2
+
+  def _slopes(self, x):
+    x = tf.reshape(x, [-1, self.num_bins - 1])
+    return tf.math.softplus(x) + 1e-2
+
+  def __init__(self, name='rqs',
+               num_bins=32, num_units=200,
+               kernel_initializer='truncated_normal',
+               **kwargs):
+    super(NormFlowRQSplineRealNVP, self).__init__(name=name, **kwargs)
+    self.num_bins = num_bins
+    self.num_units = num_units
+    self.kernel_initializer = kernel_initializer
+    #Create neural nets for widths, heights, and slopes
+    self.bin_widths = tf.keras.layers.Dense(self.num_units*self.num_bins,
+                                            activation=self._bin_positions,
+                                            name='w',
+                                            kernel_initializer=self.kernel_initializer)
+    self.bin_heights = tf.keras.layers.Dense(self.num_units*self.num_bins,
+                                             activation=self._bin_positions,
+                                             name='h',
+                                             kernel_initializer=self.kernel_initializer)
+    self.knot_slopes = tf.keras.layers.Dense(self.num_units*(self.num_bins - 1),
+                                             activation=self._slopes,
+                                             name='s',
+                                             kernel_initializer=self.kernel_initializer)
+
+  def call(self, input_tensor):
+    return tfp.bijectors.RationalQuadraticSpline(bin_widths=self.bin_widths(input_tensor),
+                                                 bin_heights=self.bin_heights(input_tensor,
+                                                 knot_slopes=self.knot_slopes(input_tensor))
+
+
+class NormFlowRQSplineRealNVP(tf.keras.layers.Layer):
+  """Follows tfp example for using rational quadratic splines (as described in Durkan et al.
+2019) with the RealNVP structure. This should allow more flexible transformations with
+similar cost and  should work much better for 1D flows.
+  """
+
+  def __init__(self, data_dim, name='rqs_realnvp_flow', num_blocks=4,
+               kernel_initializer='truncated_normal', rqs_params={}
+               **kwargs):
+    super(NormFlowRQSplineRealNVP, self).__init__(name=name, **kwargs)
+    self.data_dim = data_dim
+    self.num_blocks = 4
+    self.kernel_initializer = kernel_initializer
+    self.rqs_params = rqs_params
+    #Want to create a spline bijector for each block
+    #(one for each desired number of blocks - num_blocks should be at least 2)
+    #In case data_dim is not even, figure out lengths of split
+    self.split_lens = np.zeros(self.num_blocks, dtype=int)
+    if self.data_dim == 1:
+      self.split_lens[:] = 1
+    else:
+      self.split_lens[::2] = self.data_dim//2
+      self.split_lens[1::2] = self.data_dim - self.data_dim//2
+    self.net_list = []
+    self.block_list = []
+    for l in range(self.num_blocks):
+      self.net_list.append(SplineBijector(kernel_initializer=self.kernel_initializer,
+                                          **rqs_params))
+      this_n_masked = ((-1)**(l+1))*(self.data_dim - self.split_lens[l])
+      self.block_list.append(tfp.bijectors.RealNVP(num_masked=this_n_masked,
+                                                   bijector_fn=self.net_list[l]))
+
+  def call(self, input_tensor, reverse=False):
+    out = input_tensor
+    log_det_sum = tf.zeros(input_tensor.shape[0])
+    if not reverse:
+      for block in self.block_list:
+        log_det_sum += block.forward_log_det_jacobian(out,
+                                                      event_ndims=len(input_tensor.shape)-1)
+        out = block.forward(out)
+    else:
+      for block in self.block_list[self.num_blocks-1, -1, -1]:
+        log_det_sum += block.inverse_log_det_jacobian(out,
+                                                      event_ndims=len(input_tensor.shape)-1)
+        out = block.inverse(out)
+    return out, log_det_sum
+
+
 class DiscriminatorNet(tf.keras.layers.Layer):
   """Discriminator network for use with Adversarial VAE (see Mescheder et al. 2017,
 "Adversarial Variational Bayes..." for details. Note that two inputs are expected, one
