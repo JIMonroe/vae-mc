@@ -816,3 +816,19 @@ the encoder.
     return out
 
 
+class DimerCGMapping(tf.keras.layers.Layer):
+  """Deterministic mapping of full dimer coordinates with solvent to just the dimer pair
+distance (the coarse-grained coordinate).
+  """
+
+  def __init__(self, name='encoder', **kwargs):
+    super(DimerCGMapping, self).__init__(name=name, **kwargs)
+
+  def call(self, x_input):
+    #Assumes data is in format [x1, y1, x2, y2, ...] where the first two particles are dimer
+    #Should be if flatten Nx2 array with default flatten params in numpy or tensorflow
+    d = tf.sqrt(tf.square(x_input[:,2] - x_input[:,0])
+                + tf.square(x_input[:,3] - x_input[:,1]))
+    return tf.reshape(d, d.shape+(1,))
+
+

@@ -395,3 +395,51 @@ class AdversarialVAE(tf.keras.Model):
     return reconstructed
 
 
+class DimerCGModel(tf.keras.Model):
+  """A special case of a VAE with a deterministic mapping for the encoder and a decoder
+to invert the mapping. A flow is implemented on a standard normal prior so that new configs
+can be generated without encoding. This particular implementation is only for the dimer, the
+CG coordinate being the distance between dimer particles.
+  """
+
+  def __init__(self, data_shape=(76,), num_latent=1,
+               name='dimercg', beta=1.0,
+               **kwargs):
+    super(DimerCGModel, self).__init__(name=name, **kwargs)
+    self.data_shape = data_shape
+    self.num_latent = num_latent
+    self.beta = beta
+    flow_net_params = {'num_hidden':2, 'hidden_dim':200,
+                       'nvp_split':False, 'activation':tf.nn.relu}
+    self.encoder = architectures.DimerCGMapping()
+    self.decoder = architectures.FCDecoder(data_shape, return_vars=True)
+    #Because compressing to a latent dimension of 1, RealNVP can only scale and translate
+    #To get more expressive flow, use FFJORD, even though it's slower
+    self.flow = architectures.NormFlowFFJORD(num_latent,
+                                             kernel_initializer='truncated_normal',
+                                             flow_net_params=flow_net_params)
+
+  def call(self, inputs):
+    z = self.encoder(inputs)
+    #With flow only on prior, z passes directly through
+    reconstructed = self.decoder(z)
+    #In this model, no KL divergence, but still want to maximize likelihood of P(z)
+    #Here we define P(z) as a flow over a standard normal prior
+    #So pass z through reverse flow to estimate likelihood
+    #Should be able to do this AFTER training if like, but testing that idea out
+    #If do after, MUST do really well before actually using model in MC simulations
+    z_prior, logdet = self.flow(z, reverse=True)
+    #Estimate (negative) log likelihood of the prior
+    logp_z = tf.reduce_mean(0.5*tf.reduce_sum(tf.square(z_prior)
+                                              + tf.math.log(2.0*math.pi),
+                                              axis=1))
+    #And SUBTRACT the average log determinant for the flow transformation
+    logp_z -= tf.reduce_mean(logdet)
+    reg_loss = self.beta*logp_z
+    #Add losses within here - keeps code cleaner and less confusing
+    self.add_loss(reg_loss)
+    self.add_metric(tf.reduce_mean(logp_z), name='logp_z', aggregation='mean')
+    self.add_metric(tf.reduce_mean(reg_loss), name='regularizer_loss', aggregation='mean')
+    return reconstructed
+
+
