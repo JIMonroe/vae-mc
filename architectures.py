@@ -578,7 +578,7 @@ class NormFlowRealNVP(tf.keras.layers.Layer):
 #                                                      event_ndims=len(input_tensor.shape)-1)
 #        out = block.forward(out)
 #    else:
-#      for block in self.block_list:
+#      for block in self.block_list[::-1]:
 #        log_det_sum += block.inverse_log_det_jacobian(out,
 #                                                      event_ndims=len(input_tensor.shape)-1)
 #        out = block.inverse(out)
@@ -738,21 +738,25 @@ transformations with similar cost and should work much better with 1D flows.
   """
 
   def _bin_positions(self, x):
-    x = tf.reshape(x, [-1, self.num_bins])
+    x = tf.reshape(x, [x.shape[0], -1, self.num_bins])
     return tf.math.softmax(x, axis=-1)*(2 - self.num_bins*1e-2) + 1e-2
 
   def _slopes(self, x):
-    x = tf.reshape(x, [-1, self.num_bins - 1])
+    x = tf.reshape(x, [x.shape[0], -1, self.num_bins - 1])
     return tf.math.softplus(x) + 1e-2
 
-  def __init__(self, name='rqs',
-               num_bins=32, num_units=200,
+  def __init__(self, num_units, name='rqs', num_bins=32, num_hidden=200,
                kernel_initializer='truncated_normal',
                **kwargs):
     super(SplineBijector, self).__init__(name=name, **kwargs)
-    self.num_bins = num_bins
     self.num_units = num_units
+    self.num_bins = num_bins
+    self.num_hidden = num_hidden
     self.kernel_initializer = kernel_initializer
+    #Create an initial neural net layer
+    self.d1 = tf.keras.layers.Dense(self.num_hidden, name='d1',
+                                    activation=tf.nn.relu,
+                                    kernel_initializer=self.kernel_initializer)
     #Create neural nets for widths, heights, and slopes
     self.bin_widths = tf.keras.layers.Dense(self.num_units*self.num_bins,
                                             activation=self._bin_positions,
@@ -767,10 +771,13 @@ transformations with similar cost and should work much better with 1D flows.
                                              name='s',
                                              kernel_initializer=self.kernel_initializer)
 
-  def call(self, input_tensor):
-    return tfp.bijectors.RationalQuadraticSpline(bin_widths=self.bin_widths(input_tensor),
-                                                 bin_heights=self.bin_heights(input_tensor,
-                                                 knot_slopes=self.knot_slopes(input_tensor)))
+  def call(self, input_tensor, nunits):
+    #Don't use nunits because more efficient to create nets beforehand
+    del nunits
+    d1_out = self.d1(input_tensor)
+    return tfp.bijectors.RationalQuadraticSpline(bin_widths=self.bin_widths(d1_out),
+                                                 bin_heights=self.bin_heights(d1_out),
+                                                 knot_slopes=self.knot_slopes(d1_out))
 
 
 class NormFlowRQSplineRealNVP(tf.keras.layers.Layer):
@@ -784,7 +791,7 @@ similar cost and  should work much better for 1D flows.
                **kwargs):
     super(NormFlowRQSplineRealNVP, self).__init__(name=name, **kwargs)
     self.data_dim = data_dim
-    self.num_blocks = 4
+    self.num_blocks = num_blocks
     self.kernel_initializer = kernel_initializer
     self.rqs_params = rqs_params
     #Want to create a spline bijector for each block
@@ -799,10 +806,12 @@ similar cost and  should work much better for 1D flows.
     self.net_list = []
     self.block_list = []
     for l in range(self.num_blocks):
-      self.net_list.append(SplineBijector(kernel_initializer=self.kernel_initializer,
+      self.net_list.append(SplineBijector(self.split_lens[l],
+                                          kernel_initializer=self.kernel_initializer,
                                           **rqs_params))
       this_n_masked = ((-1)**(l+1))*(self.data_dim - self.split_lens[l])
       self.block_list.append(tfp.bijectors.RealNVP(num_masked=this_n_masked,
+                                                   name='block_%i'%l,
                                                    bijector_fn=self.net_list[l]))
 
   def call(self, input_tensor, reverse=False):
@@ -814,7 +823,7 @@ similar cost and  should work much better for 1D flows.
                                                       event_ndims=len(input_tensor.shape)-1)
         out = block.forward(out)
     else:
-      for block in self.block_list[self.num_blocks-1, -1, -1]:
+      for block in self.block_list[::-1]:
         log_det_sum += block.inverse_log_det_jacobian(out,
                                                       event_ndims=len(input_tensor.shape)-1)
         out = block.inverse(out)
