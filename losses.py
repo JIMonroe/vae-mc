@@ -497,7 +497,7 @@ Works for arbitrary numbers of configurations.
   new_conf = conf + noise
   new_energy = energy_func(new_conf)
   #For Gaussian noise, probability of reverse move is same as forward due to symmetry
-  log_prob = -self.beta*(new_energy - energy)
+  log_prob = -beta*(new_energy - energy)
   rand_log = np.log(np.random.random(conf.shape[0]))
   rej = np.where(log_prob < rand_log)[0]
   new_conf[rej] = conf[rej]
@@ -506,20 +506,26 @@ Works for arbitrary numbers of configurations.
 
 
 def SrelLossGrad(confs, mc_move_func, cg_pot,
-                 num_steps=int(1e4), mc_noise=1.0, beta=1.0):
+                 num_steps=int(1e3), mc_noise=1.0, beta=1.0):
   """Calculates the gradients of the relative entropy loss of coarse-graining. The provided
 configurations (confs) to average over should be in the coarse-grained coordinates. Note that
 we cannot compute the loss directly without knowning the CG ensemble partition function, so
 this only returns the gradients with respect to the coefficients.
   """
+  #import matplotlib.pyplot as plt
   #First term is average over full-resolution ensemble
   full_res_avg = np.average(cg_pot.get_coeff_derivs(confs), axis=0)
   #For next term need to average over CG ensemble, so run simulation in this ensemble first
   cg_confs = confs
   cg_energies = cg_pot(cg_confs)
+  #to_plot = np.zeros(num_steps+1)
+  #to_plot[0] = cg_confs[0]
   for step in range(num_steps):
     cg_confs, cg_energies = mc_move_func(cg_confs, cg_energies, cg_pot,
                                          noise_std=mc_noise, beta=beta)
+    #to_plot[step+1] = cg_confs[0]
+  #plt.plot(cg_confs)
+  #plt.show()
   cg_res_avg = np.average(cg_pot.get_coeff_derivs(cg_confs), axis=0)
   grads = beta*(full_res_avg - cg_res_avg)
   return grads

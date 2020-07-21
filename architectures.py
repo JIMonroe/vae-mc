@@ -932,26 +932,30 @@ distance (the coarse-grained coordinate).
     return tf.reshape(d, d.shape+(1,))
 
 
-class SplinePotential(object):
+class SplinePotential(tf.keras.layers.Layer):
   """Defines a potential energy in terms of splines for use with relative entropy coarse-
 graining.
   """
 
-  def __init__(self, knot_points=None, beta=1.0):
+  def __init__(self, name='spline_u', knot_points=None, beta=1.0, **kwargs):
+    super(SplinePotential, self).__init__(name=name, **kwargs)
     if knot_points is None:
       self.knots = np.linspace(0.0, 1.0, 50)
     else:
       self.knots = knot_points
     self.beta = beta
     #Set up coefficients for 3rd order (cubic) splines
-    self.coeffs = np.ones(self.knots.shape[0] - 4)
-    self.bspline = si.BSpline(self.knots, self.coeffs, 3, extrapolate=True)
+    self.coeffs = self.add_weight(shape=(self.knots.shape[0] - 4,), name='coeffs',
+                                  initializer='ones', trainable=False)
+    self.bspline = si.BSpline(self.knots,
+                              self.coeffs.numpy().astype('float64'),
+                              3, extrapolate=True)
 
-  def __call__(self, x):
+  def call(self, x):
     """For the given positions, returns the spline values at those positions. Outside of
 the spline range, extrapolation is used (see scipy.interpolate.BSpline).
     """
-    return self.beta*self.bspline(x)
+    return self.beta*self.bspline(x.numpy())
 
   def get_coeff_derivs(self, x):
     """Returns the derivatives with respect to all coefficients (gradient vector) for all of
@@ -963,7 +967,7 @@ number of coefficients.
     for i, cvec in enumerate(temp_coeffs):
       self.bspline.c = cvec
       coeff_derivs[:, i] = self.bspline(x)
-    self.bspline.c = self.coeffs
+    self.bspline.c = self.coeffs.numpy().astype('float64')
     return self.beta*coeff_derivs
 
 

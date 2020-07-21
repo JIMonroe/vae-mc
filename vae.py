@@ -410,7 +410,7 @@ CG coordinate being the distance between dimer particles.
     self.num_latent = num_latent
     self.beta = beta
     flow_net_params = {'num_hidden':2, 'hidden_dim':200,
-                       'nvp_split':False, 'activation':tf.nn.relu}
+                       'nvp_split':False, 'activation':tf.nn.softplus}
     self.encoder = architectures.DimerCGMapping()
     self.decoder = architectures.FCDecoder(data_shape, return_vars=True)
     #Because compressing to a latent dimension of 1, RealNVP can only scale and translate
@@ -435,6 +435,7 @@ CG coordinate being the distance between dimer particles.
                                               axis=1))
     #And SUBTRACT the average log determinant for the flow transformation
     logp_z -= tf.reduce_mean(logdet)
+#    logp_z = 0.0
     reg_loss = self.beta*logp_z
     #Add losses within here - keeps code cleaner and less confusing
     self.add_loss(reg_loss)
