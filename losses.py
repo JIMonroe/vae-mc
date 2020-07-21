@@ -487,3 +487,41 @@ class RegularizerLossMetric(tf.keras.metrics.Metric):
     return self.current_reg.assign(0.)
 
 
+def gaussian_move(conf, energy, energy_func,
+                  noise_std=1.0, beta=1.0):
+  """Uses Gaussian noise to generate an MC move given a configuration. Returns the
+new configuration if accepted and the old if rejected based on Metropolis criteria.
+Works for arbitrary numbers of configurations.
+  """
+  noise = np.random.normal(loc=0.0, scale=noise_std, size=conf.shape)
+  new_conf = conf + noise
+  new_energy = energy_func(new_conf)
+  #For Gaussian noise, probability of reverse move is same as forward due to symmetry
+  log_prob = -self.beta*(new_energy - energy)
+  rand_log = np.log(np.random.random(conf.shape[0]))
+  rej = np.where(log_prob < rand_log)[0]
+  new_conf[rej] = conf[rej]
+  new_energy[rej] = energy[rej]
+  return new_conf, new_energy
+
+
+def SrelLossGrad(confs, mc_move_func, cg_pot,
+                 num_steps=int(1e4), mc_noise=1.0, beta=1.0):
+  """Calculates the gradients of the relative entropy loss of coarse-graining. The provided
+configurations (confs) to average over should be in the coarse-grained coordinates. Note that
+we cannot compute the loss directly without knowning the CG ensemble partition function, so
+this only returns the gradients with respect to the coefficients.
+  """
+  #First term is average over full-resolution ensemble
+  full_res_avg = np.average(cg_pot.get_coeff_derivs(confs), axis=0)
+  #For next term need to average over CG ensemble, so run simulation in this ensemble first
+  cg_confs = confs
+  cg_energies = cg_pot(cg_confs)
+  for step in range(num_steps):
+    cg_confs, cg_energies = mc_move_func(cg_confs, cg_energies, cg_pot,
+                                         noise_std=mc_noise, beta=beta)
+  cg_res_avg = np.average(cg_pot.get_coeff_derivs(cg_confs), axis=0)
+  grads = beta*(full_res_avg - cg_res_avg)
+  return grads
+
+

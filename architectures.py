@@ -16,6 +16,7 @@
 Adapted from disentanglement_lib https://github.com/google-research/disentanglement_lib"""
 import copy
 import numpy as np
+import scipy.interpolate as si
 import tensorflow as tf
 import tensorflow_probability as tfp
 
@@ -748,7 +749,7 @@ transformations with similar cost and should work much better with 1D flows.
                num_bins=32, num_units=200,
                kernel_initializer='truncated_normal',
                **kwargs):
-    super(NormFlowRQSplineRealNVP, self).__init__(name=name, **kwargs)
+    super(SplineBijector, self).__init__(name=name, **kwargs)
     self.num_bins = num_bins
     self.num_units = num_units
     self.kernel_initializer = kernel_initializer
@@ -769,7 +770,7 @@ transformations with similar cost and should work much better with 1D flows.
   def call(self, input_tensor):
     return tfp.bijectors.RationalQuadraticSpline(bin_widths=self.bin_widths(input_tensor),
                                                  bin_heights=self.bin_heights(input_tensor,
-                                                 knot_slopes=self.knot_slopes(input_tensor))
+                                                 knot_slopes=self.knot_slopes(input_tensor)))
 
 
 class NormFlowRQSplineRealNVP(tf.keras.layers.Layer):
@@ -779,7 +780,7 @@ similar cost and  should work much better for 1D flows.
   """
 
   def __init__(self, data_dim, name='rqs_realnvp_flow', num_blocks=4,
-               kernel_initializer='truncated_normal', rqs_params={}
+               kernel_initializer='truncated_normal', rqs_params={},
                **kwargs):
     super(NormFlowRQSplineRealNVP, self).__init__(name=name, **kwargs)
     self.data_dim = data_dim
@@ -920,5 +921,40 @@ distance (the coarse-grained coordinate).
     d = tf.sqrt(tf.square(x_input[:,2] - x_input[:,0])
                 + tf.square(x_input[:,3] - x_input[:,1]))
     return tf.reshape(d, d.shape+(1,))
+
+
+class SplinePotential(object):
+  """Defines a potential energy in terms of splines for use with relative entropy coarse-
+graining.
+  """
+
+  def __init__(self, knot_points=None, beta=1.0):
+    if knot_points is None:
+      self.knots = np.linspace(0.0, 1.0, 50)
+    else:
+      self.knots = knot_points
+    self.beta = beta
+    #Set up coefficients for 3rd order (cubic) splines
+    self.coeffs = np.ones(self.knots.shape[0] - 4)
+    self.bspline = si.BSpline(self.knots, self.coeffs, 3, extrapolate=True)
+
+  def __call__(self, x):
+    """For the given positions, returns the spline values at those positions. Outside of
+the spline range, extrapolation is used (see scipy.interpolate.BSpline).
+    """
+    return self.beta*self.bspline(x)
+
+  def get_coeff_derivs(self, x):
+    """Returns the derivatives with respect to all coefficients (gradient vector) for all of
+the input positions. The result is NxM where N is the number of input positions and M is the
+number of coefficients.
+    """
+    coeff_derivs = np.zeros((x.shape[0], self.coeffs.shape[0]))
+    temp_coeffs = np.eye(self.coeffs.shape[0])
+    for i, cvec in enumerate(temp_coeffs):
+      self.bspline.c = cvec
+      coeff_derivs[:, i] = self.bspline(x)
+    self.bspline.c = self.coeffs
+    return self.beta*coeff_derivs
 
 
