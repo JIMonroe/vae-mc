@@ -20,6 +20,7 @@ Adapted from disentanglement_lib https://github.com/google-research/disentanglem
 
 import math
 from libVAE import architectures, losses
+import numpy as np
 import tensorflow as tf
 
 
@@ -436,6 +437,44 @@ CG coordinate being the distance between dimer particles.
     #And SUBTRACT the average log determinant for the flow transformation
     logp_z -= tf.reduce_mean(logdet)
 #    logp_z = 0.0
+    reg_loss = self.beta*logp_z
+    #Add losses within here - keeps code cleaner and less confusing
+    self.add_loss(reg_loss)
+    self.add_metric(tf.reduce_mean(logp_z), name='logp_z', aggregation='mean')
+    self.add_metric(tf.reduce_mean(reg_loss), name='regularizer_loss', aggregation='mean')
+    return reconstructed
+
+
+class DimerSrelModel(tf.keras.Model):
+  """A special case of a VAE with a deterministic mapping for the encoder and a decoder
+to invert the mapping. The prior is a canonical ensemble distribution parametrized through
+its potential energy function, which is modelled by cubic B-splines. This requires that
+a separate optimization be performed for the decoder and the prior, as the parameters
+and respective loss functions are not coupled in any way.
+  """
+
+  def __init__(self, data_shape=(76,), num_latent=1,
+               name='dimersrel', beta=1.0,
+               **kwargs):
+    super(DimerSrelModel, self).__init__(name=name, **kwargs)
+    self.data_shape = data_shape
+    self.num_latent = num_latent
+    self.beta = beta
+    self.encoder = architectures.DimerCGMapping()
+    self.decoder = architectures.FCDecoder(data_shape, return_vars=True)
+    self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.5, 2.5, 50))
+
+  def call(self, inputs):
+    z = self.encoder(inputs)
+    reconstructed = self.decoder(z)
+    #In this model, no KL divergence, but still want to maximize likelihood of P(z)
+    #This is equivalent to the Srel coarse-graining problem
+    #With this type of problem cannot compute loss directly, but do know gradients
+    #(because of difficulty in estimating partition function)
+    #As a result, no point in computing loss or gradients here
+    #Save that for a custom optimization loop
+    #But to avoid breaking other training loops, just set things to zero
+    logp_z = 0.0
     reg_loss = self.beta*logp_z
     #Add losses within here - keeps code cleaner and less confusing
     self.add_loss(reg_loss)

@@ -946,7 +946,7 @@ graining.
     self.beta = beta
     #Set up coefficients for 3rd order (cubic) splines
     self.coeffs = self.add_weight(shape=(self.knots.shape[0] - 4,), name='coeffs',
-                                  initializer='ones', trainable=False)
+                                  initializer='ones', trainable=True)
     self.bspline = si.BSpline(self.knots,
                               self.coeffs.numpy().astype('float64'),
                               3, extrapolate=True)

@@ -707,3 +707,100 @@ def trainPriorFlowKL(model,
   #print(train_history.history)
 
 
+def trainSrelCG(model,
+                data_file,
+                num_epochs=2,
+                batch_size=64,
+                save_dir='vae_info',
+                overwrite=False):
+  """Trains JUST the CG model parameters. Equivalent to Srel coarse-graining.
+
+  Args:
+    model: the VAE model object to train and save
+    data_file: a file containing the data for training/validation
+    num_epochs: Integer with number of epochs to train (each is over all samples)
+    batch_size: Integer with the batch size
+    save_dir: String with path to directory to save to
+    overwrite: Boolean determining whether data is overwritten
+  """
+
+  #Check if the directory exists
+  #If so, assume continuation and load model weights
+  if os.path.isdir(save_dir):
+    #If overwrite is True, don't need to do anything
+    #If it's False, create a new directory to save to
+    if not overwrite:
+      print("Found saved model at %s and overwrite is False."%save_dir)
+      print("Will attempt to load and continue training.")
+      model.load_weights(os.path.join(save_dir, 'training.ckpt'))
+      #print(model.summary())
+      try:
+        dir_split = save_dir.split('_')
+        train_num = int(dir_split[-1])
+        save_dir = '%s_%i'%("_".join(dir_split[:-1]), train_num+1)
+      except ValueError:
+        save_dir = '%s_1'%(save_dir)
+      os.mkdir(save_dir)
+  #If not, create that directory to save to later
+  else:
+    os.mkdir(save_dir)
+
+  print("Model set up and ready to train.")
+
+  #Want to load in data
+  #trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
+  trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
+                                                 dset='all', permute=True)#, center_and_whiten=True)
+  #trainData = dataloaders.raw_image_data(data_file)
+  #trainData, valData = dataloaders.dsprites_data(batch_size, val_frac=0.01)
+
+  #Set up path for checkpoint files
+  checkpoint_path = os.path.join(save_dir, 'training.ckpt')
+
+  #Compared to training other functions, can up the learning rate
+  optimizer = tf.keras.optimizers.Adam(learning_rate=0.01,
+                                       beta_1=0.9,
+                                       beta_2=0.999,
+                                       epsilon=1e-08,
+                                      )
+
+  #Specify a type of MC move to propagate CG system
+  mc_move_func = losses.gaussian_move
+
+  print("Beginning training at: %s"%time.ctime())
+
+  #Loop over epochs
+  for epoch in range(num_epochs):
+    print('\nOn epoch %d:'%epoch)
+
+    #Iterate over batches in the dataset
+    for step, x_batch_train in enumerate(trainData):
+      z = model.encoder(x_batch_train[0]).numpy()
+      grads = losses.SrelLossGrad(np.squeeze(z), mc_move_func, model.Ucg,
+                                  mc_noise=0.1, beta=1.0)
+      optimizer.apply_gradients(zip([grads], model.Ucg.trainable_weights))
+
+      if step%100 == 0:
+        print('\tStep %i: max_gradient=%f'%(step, np.max(grads)))
+
+    #Save checkpoint after each epoch
+    print('\tEpoch finished, saving checkpoint.')
+    model.save_weights(checkpoint_path.format(epoch=epoch))
+
+    #Check against validation data
+    val_grad = tf.constant(0.0)
+    batchCount = 0.0
+    for x_batch_val in valData:
+      z = model.encoder(x_batch_val[0]).numpy()
+      val_grad += np.max(losses.SrelLossGrad(np.squeeze(z), mc_move_func, model.Ucg,
+                                             mc_noise=0.1, beta=1.0))
+      batchCount += 1.0
+    val_grad /= batchCount
+    print('\tValidation max_gradient=%f'%val_grad)
+
+  print("Training completed at: %s"%time.ctime())
+  print(model.summary())
+
+  #print(train_history.history)
+
+
