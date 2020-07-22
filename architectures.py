@@ -747,32 +747,32 @@ transformations with similar cost and should work much better with 1D flows.
     x = tf.reshape(x, [x.shape[0], -1, self.num_bins - 1])
     return tf.math.softplus(x) + 1e-2
 
-  def __init__(self, num_units, name='rqs',
+  def __init__(self, data_dim, name='rqs',
                bin_range=[-1.0, 1.0],
-               num_bins=32, num_hidden=200,
+               num_bins=32, hidden_dim=200,
                kernel_initializer='truncated_normal',
                **kwargs):
     super(SplineBijector, self).__init__(name=name, **kwargs)
-    self.num_units = num_units
+    self.data_dim = data_dim
     self.bin_min = bin_range[0]
     self.bin_max = bin_range[1]
     self.num_bins = num_bins
-    self.num_hidden = num_hidden
+    self.hidden_dim = hidden_dim
     self.kernel_initializer = kernel_initializer
     #Create an initial neural net layer
-    self.d1 = tf.keras.layers.Dense(self.num_hidden, name='d1',
+    self.d1 = tf.keras.layers.Dense(self.hidden_dim, name='d1',
                                     activation=tf.nn.relu,
                                     kernel_initializer=self.kernel_initializer)
     #Create neural nets for widths, heights, and slopes
-    self.bin_widths = tf.keras.layers.Dense(self.num_units*self.num_bins,
+    self.bin_widths = tf.keras.layers.Dense(self.data_dim*self.num_bins,
                                             activation=self._bin_positions,
                                             name='w',
                                             kernel_initializer=self.kernel_initializer)
-    self.bin_heights = tf.keras.layers.Dense(self.num_units*self.num_bins,
+    self.bin_heights = tf.keras.layers.Dense(self.data_dim*self.num_bins,
                                              activation=self._bin_positions,
                                              name='h',
                                              kernel_initializer=self.kernel_initializer)
-    self.knot_slopes = tf.keras.layers.Dense(self.num_units*(self.num_bins - 1),
+    self.knot_slopes = tf.keras.layers.Dense(self.data_dim*(self.num_bins - 1),
                                              activation=self._slopes,
                                              name='s',
                                              kernel_initializer=self.kernel_initializer)

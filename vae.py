@@ -410,15 +410,14 @@ CG coordinate being the distance between dimer particles.
     self.data_shape = data_shape
     self.num_latent = num_latent
     self.beta = beta
-    flow_net_params = {'num_hidden':2, 'hidden_dim':200,
-                       'nvp_split':False, 'activation':tf.nn.softplus}
+    flow_net_params = {'bin_range':[-10.0, 10.0], 'num_bins':32, 'hidden_dim':200}
     self.encoder = architectures.DimerCGMapping()
     self.decoder = architectures.FCDecoder(data_shape, return_vars=True)
     #Because compressing to a latent dimension of 1, RealNVP can only scale and translate
-    #To get more expressive flow, use FFJORD, even though it's slower
-    self.flow = architectures.NormFlowFFJORD(num_latent,
-                                             kernel_initializer='truncated_normal',
-                                             flow_net_params=flow_net_params)
+    #To get most expressive flow, could use FFJORD, but it's slow, so use RQS
+    self.flow = architectures.NormFlowRQSplineRealNVP(self.num_latent,
+                                                      kernel_initializer='truncated_normal',
+                                                      rqs_params=flow_net_params)
 
   def call(self, inputs):
     z = self.encoder(inputs)
@@ -462,7 +461,7 @@ and respective loss functions are not coupled in any way.
     self.beta = beta
     self.encoder = architectures.DimerCGMapping()
     self.decoder = architectures.FCDecoder(data_shape, return_vars=True)
-    self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.7, 2.3, 40))
+    self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.8, 2.2, 40))
 
   def call(self, inputs):
     z = self.encoder(inputs)
@@ -499,21 +498,21 @@ between the two, 'system_type' should either be 'dimer' or 'lg'.
     self.system = system_type
     self.num_latent = num_latent
     self.beta = beta
-    flow_net_params = {'num_hidden':2, 'hidden_dim':200,
-                       'nvp_split':False, 'activation':tf.nn.softplus}
     if self.system == 'dimer':
       self.encoder = architectures.DimerCGMapping()
+      flow_net_params = {'bin_range':[-10.0, 10.0], 'num_bins':32, 'hidden_dim':200}
     elif self.system == 'lg':
       self.encoder = architectures.LatticeGasCGMapping()
+      flow_net_params = {'bin_range':[0.0, 1.0], 'num_bins':32, 'hidden_dim':200}
     else:
       raise ValueError("System type of %s not understood."%self.system
                        +"\nMust be dimer or lg")
     self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
     #Because compressing to a latent dimension of 1, RealNVP can only scale and translate
-    #To get more expressive flow, use FFJORD, even though it's slower
-    self.flow = architectures.NormFlowFFJORD(self.num_latent,
-                                             kernel_initializer='truncated_normal',
-                                             flow_net_params=flow_net_params)
+    #To get most expressive flow, could use FFJORD, but it's slow, so use RQS
+    self.flow = architectures.NormFlowRQSplineRealNVP(self.num_latent,
+                                                      kernel_initializer='truncated_normal',
+                                                      rqs_params=flow_net_params)
 
   def call(self, inputs):
     z = self.encoder(inputs)
