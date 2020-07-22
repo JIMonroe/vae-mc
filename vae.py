@@ -559,7 +559,7 @@ lattice gas system as 'dimer' or 'lg' input to the 'system_type' argument.
     self.beta = beta
     if self.system == 'dimer':
       self.encoder = architectures.DimerCGMapping()
-      self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.7, 2.3, 40))
+      self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.8, 2.2, 40))
     elif self.system == 'lg':
       self.encoder = architectures.LatticeGasCGMapping()
       self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.0, 1.0, 40))
