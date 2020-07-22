@@ -462,7 +462,111 @@ and respective loss functions are not coupled in any way.
     self.beta = beta
     self.encoder = architectures.DimerCGMapping()
     self.decoder = architectures.FCDecoder(data_shape, return_vars=True)
-    self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.5, 2.5, 50))
+    self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.7, 2.3, 40))
+
+  def call(self, inputs):
+    z = self.encoder(inputs)
+    reconstructed = self.decoder(z)
+    #In this model, no KL divergence, but still want to maximize likelihood of P(z)
+    #This is equivalent to the Srel coarse-graining problem
+    #With this type of problem cannot compute loss directly, but do know gradients
+    #(because of difficulty in estimating partition function)
+    #As a result, no point in computing loss or gradients here
+    #Save that for a custom optimization loop
+    #But to avoid breaking other training loops, just set things to zero
+    logp_z = 0.0
+    reg_loss = self.beta*logp_z
+    #Add losses within here - keeps code cleaner and less confusing
+    self.add_loss(reg_loss)
+    self.add_metric(tf.reduce_mean(logp_z), name='logp_z', aggregation='mean')
+    self.add_metric(tf.reduce_mean(reg_loss), name='regularizer_loss', aggregation='mean')
+    return reconstructed
+
+
+class CGModel(tf.keras.Model):
+  """A special case of a VAE with a deterministic mapping for the encoder and a decoder
+to invert the mapping. A flow is implemented on a standard normal prior so that new configs
+can be generated without encoding. For a dimer, the CG coordinate is the distance between
+dimer particles. For a lattice gas, the coordinate is the average density per site. To switch
+between the two, 'system_type' should either be 'dimer' or 'lg'.
+  """
+
+  def __init__(self, data_shape, system_type,
+               num_latent=1, name='cgmodel', beta=1.0,
+               **kwargs):
+    super(CGModel, self).__init__(name=name, **kwargs)
+    self.data_shape = data_shape
+    self.system = system_type
+    self.num_latent = num_latent
+    self.beta = beta
+    flow_net_params = {'num_hidden':2, 'hidden_dim':200,
+                       'nvp_split':False, 'activation':tf.nn.softplus}
+    if self.system == 'dimer':
+      self.encoder = architectures.DimerCGMapping()
+    elif self.system == 'lg':
+      self.encoder = architectures.LatticeGasCGMapping()
+    else:
+      raise ValueError("System type of %s not understood."%self.system
+                       "\nMust be \'dimer\' or \'lg\'")
+    self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
+    #Because compressing to a latent dimension of 1, RealNVP can only scale and translate
+    #To get more expressive flow, use FFJORD, even though it's slower
+    self.flow = architectures.NormFlowFFJORD(self.num_latent,
+                                             kernel_initializer='truncated_normal',
+                                             flow_net_params=flow_net_params)
+
+  def call(self, inputs):
+    z = self.encoder(inputs)
+    #With flow only on prior, z passes directly through
+    reconstructed = self.decoder(z)
+    #In this model, no KL divergence, but still want to maximize likelihood of P(z)
+    #Here we define P(z) as a flow over a standard normal prior
+    #So pass z through reverse flow to estimate likelihood
+    #Should be able to do this AFTER training if like, but testing that idea out
+    #If do after, MUST do really well before actually using model in MC simulations
+    z_prior, logdet = self.flow(z, reverse=True)
+    #Estimate (negative) log likelihood of the prior
+    logp_z = tf.reduce_mean(0.5*tf.reduce_sum(tf.square(z_prior)
+                                              + tf.math.log(2.0*math.pi),
+                                              axis=1))
+    #And SUBTRACT the average log determinant for the flow transformation
+    logp_z -= tf.reduce_mean(logdet)
+#    logp_z = 0.0
+    reg_loss = self.beta*logp_z
+    #Add losses within here - keeps code cleaner and less confusing
+    self.add_loss(reg_loss)
+    self.add_metric(tf.reduce_mean(logp_z), name='logp_z', aggregation='mean')
+    self.add_metric(tf.reduce_mean(reg_loss), name='regularizer_loss', aggregation='mean')
+    return reconstructed
+
+
+class SrelModel(tf.keras.Model):
+  """A special case of a VAE with a deterministic mapping for the encoder and a decoder
+to invert the mapping. The prior is a canonical ensemble distribution parametrized through
+its potential energy function, which is modelled by cubic B-splines. This requires that
+a separate optimization be performed for the decoder and the prior, as the parameters
+and respective loss functions are not coupled in any way. Can choose between a dimer or
+lattice gas system as 'dimer' or 'lg' input to the 'system_type' argument.
+  """
+
+  def __init__(self, data_shape, system_type,
+               num_latent=1, name='srelmodel', beta=1.0,
+               **kwargs):
+    super(SrelModel, self).__init__(name=name, **kwargs)
+    self.data_shape = data_shape
+    self.system = system_type
+    self.num_latent = num_latent
+    self.beta = beta
+    if self.system == 'dimer':
+      self.encoder = architectures.DimerCGMapping()
+      self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.7, 2.3, 40))
+    elif self.system == 'lg':
+      self.encoder = architectures.LatticeGasCGMapping()
+      self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.0, 1.0, 40))
+    else:
+      raise ValueError("System type of %s not understood."%self.system
+                       "\nMust be \'dimer\' or \'lg\'")
+    self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
 
   def call(self, inputs):
     z = self.encoder(inputs)
