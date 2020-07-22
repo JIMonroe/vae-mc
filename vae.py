@@ -507,7 +507,7 @@ between the two, 'system_type' should either be 'dimer' or 'lg'.
       self.encoder = architectures.LatticeGasCGMapping()
     else:
       raise ValueError("System type of %s not understood."%self.system
-                       "\nMust be \'dimer\' or \'lg\'")
+                       +"\nMust be dimer or lg")
     self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
     #Because compressing to a latent dimension of 1, RealNVP can only scale and translate
     #To get more expressive flow, use FFJORD, even though it's slower
@@ -565,7 +565,7 @@ lattice gas system as 'dimer' or 'lg' input to the 'system_type' argument.
       self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.0, 1.0, 40))
     else:
       raise ValueError("System type of %s not understood."%self.system
-                       "\nMust be \'dimer\' or \'lg\'")
+                       +"\nMust be dimer or lg")
     self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
 
   def call(self, inputs):
