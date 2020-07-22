@@ -780,6 +780,8 @@ transformations with similar cost and should work much better with 1D flows.
   def call(self, input_tensor, nunits):
     #Don't use nunits because more efficient to create nets beforehand
     del nunits
+    if input_tensor.shape[1] == 0:
+      input_tensor = tf.ones((input_tensor.shape[0], 1))
     d1_out = self.d1(input_tensor)
     return tfp.bijectors.RationalQuadraticSpline(bin_widths=self.bin_widths(d1_out),
                                                  bin_heights=self.bin_heights(d1_out),
