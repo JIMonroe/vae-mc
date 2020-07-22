@@ -739,17 +739,23 @@ transformations with similar cost and should work much better with 1D flows.
 
   def _bin_positions(self, x):
     x = tf.reshape(x, [x.shape[0], -1, self.num_bins])
-    return tf.math.softmax(x, axis=-1)*(2 - self.num_bins*1e-2) + 1e-2
+    out = tf.math.softmax(x, axis=-1)
+    out *= (self.bin_max - self.bin_min - self.num_bins*1e-2) + 1e-2
+    return out
 
   def _slopes(self, x):
     x = tf.reshape(x, [x.shape[0], -1, self.num_bins - 1])
     return tf.math.softplus(x) + 1e-2
 
-  def __init__(self, num_units, name='rqs', num_bins=32, num_hidden=200,
+  def __init__(self, num_units, name='rqs',
+               bin_range=[-1.0, 1.0],
+               num_bins=32, num_hidden=200,
                kernel_initializer='truncated_normal',
                **kwargs):
     super(SplineBijector, self).__init__(name=name, **kwargs)
     self.num_units = num_units
+    self.bin_min = bin_range[0]
+    self.bin_max = bin_range[1]
     self.num_bins = num_bins
     self.num_hidden = num_hidden
     self.kernel_initializer = kernel_initializer
@@ -777,7 +783,8 @@ transformations with similar cost and should work much better with 1D flows.
     d1_out = self.d1(input_tensor)
     return tfp.bijectors.RationalQuadraticSpline(bin_widths=self.bin_widths(d1_out),
                                                  bin_heights=self.bin_heights(d1_out),
-                                                 knot_slopes=self.knot_slopes(d1_out))
+                                                 knot_slopes=self.knot_slopes(d1_out),
+                                                 range_min=self.bin_min)
 
 
 class NormFlowRQSplineRealNVP(tf.keras.layers.Layer):
