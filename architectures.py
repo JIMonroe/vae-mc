@@ -932,6 +932,19 @@ distance (the coarse-grained coordinate).
     return tf.reshape(d, d.shape+(1,))
 
 
+class LatticeGasCGMapping(tf.keras.layers.Layer):
+  """Deterministic mapping of full LG configuration to average density per site.
+  """
+
+  def __init__(self, name='encoder', **kwargs):
+    super(LatticeGasCGMapping, self).__init__(name=name, **kwargs)
+
+  def call(self, x_input):
+    n = tf.reduce_sum(x_input, axis=np.arange(1, len(x_input.shape)))
+    dens = n / tf.reduce_prod(x_input.shape[1:])
+    return dens
+
+
 class SplinePotential(tf.keras.layers.Layer):
   """Defines a potential energy in terms of splines for use with relative entropy coarse-
 graining.
