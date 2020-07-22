@@ -500,16 +500,15 @@ between the two, 'system_type' should either be 'dimer' or 'lg'.
     self.beta = beta
     if self.system == 'dimer':
       self.encoder = architectures.DimerCGMapping()
-      flow_net_params = {'bin_range':[-10.0, 10.0], 'num_bins':32, 'hidden_dim':200}
     elif self.system == 'lg':
       self.encoder = architectures.LatticeGasCGMapping()
-      flow_net_params = {'bin_range':[0.0, 1.0], 'num_bins':32, 'hidden_dim':200}
     else:
       raise ValueError("System type of %s not understood."%self.system
                        +"\nMust be dimer or lg")
     self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
     #Because compressing to a latent dimension of 1, RealNVP can only scale and translate
     #To get most expressive flow, could use FFJORD, but it's slow, so use RQS
+    flow_net_params = {'bin_range':[-10.0, 10.0], 'num_bins':32, 'hidden_dim':200}
     self.flow = architectures.NormFlowRQSplineRealNVP(self.num_latent,
                                                       kernel_initializer='truncated_normal',
                                                       rqs_params=flow_net_params)

@@ -748,7 +748,7 @@ transformations with similar cost and should work much better with 1D flows.
     return tf.math.softplus(x) + 1e-2
 
   def __init__(self, data_dim, name='rqs',
-               bin_range=[-1.0, 1.0],
+               bin_range=[-10.0, 10.0],
                num_bins=32, hidden_dim=200,
                kernel_initializer='truncated_normal',
                **kwargs):
