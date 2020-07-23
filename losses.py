@@ -524,7 +524,7 @@ this only returns the gradients with respect to the coefficients.
     cg_confs, cg_energies = mc_move_func(cg_confs, cg_energies, cg_pot,
                                          noise_std=mc_noise, beta=beta)
     #to_plot[step+1] = cg_confs[0]
-  #plt.plot(cg_confs)
+  #plt.plot(to_plot)
   #plt.show()
   cg_res_avg = np.average(cg_pot.get_coeff_derivs(cg_confs), axis=0)
   grads = beta*(full_res_avg - cg_res_avg)
