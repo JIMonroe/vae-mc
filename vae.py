@@ -316,8 +316,6 @@ their paper 'Variational Lossy Autoencoder.'
     #By default, use fully-connect (fc) architecture for neural nets
     #Can switch to convolutional if specify arch='conv' (won't have flow, though)
     self.arch = arch
-    flow_net_params = {'num_hidden':2, 'hidden_dim':200,
-                       'nvp_split':True, 'activation':tf.nn.relu}
     if self.arch == 'conv':
       self.encoder = architectures.ConvEncoder(num_latent)
       self.decoder = architectures.DeconvDecoder(data_shape)
@@ -325,10 +323,16 @@ their paper 'Variational Lossy Autoencoder.'
       self.encoder = architectures.FCEncoder(num_latent, hidden_dim=1200)
       self.decoder = architectures.FCDecoder(data_shape, return_vars=self.include_vars)
     self.sampler = architectures.SampleLatent()
-    self.flow = architectures.NormFlowRealNVP(num_latent,
-                                              kernel_initializer='truncated_normal',
-                                              flow_net_params=flow_net_params,
-                                              num_blocks=4)
+    #flow_net_params = {'num_hidden':2, 'hidden_dim':200,
+    #                   'nvp_split':True, 'activation':tf.nn.relu}
+    #self.flow = architectures.NormFlowRealNVP(num_latent,
+    #                                          kernel_initializer='truncated_normal',
+    #                                          flow_net_params=flow_net_params,
+    #                                          num_blocks=4)
+    flow_net_params = {'bin_range':[-10.0, 10.0], 'num_bins':32, 'hidden_dim':200}
+    self.flow = architectures.NormFlowRQSplineRealNVP(self.num_latent,
+                                                      kernel_initializer='truncated_normal',
+                                                      rqs_params=flow_net_params)
 
   def regularizer(self, kl_loss, z_mean, z_logvar, z_sampled):
     del z_mean, z_logvar, z_sampled
