@@ -504,12 +504,13 @@ between the two, 'system_type' should either be 'dimer' or 'lg'.
     self.beta = beta
     if self.system == 'dimer':
       self.encoder = architectures.DimerCGMapping()
+      self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
     elif self.system == 'lg':
       self.encoder = architectures.LatticeGasCGMapping()
+      self.decoder = architectures.FCDecoder(self.data_shape)
     else:
       raise ValueError("System type of %s not understood."%self.system
                        +"\nMust be dimer or lg")
-    self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
     #Because compressing to a latent dimension of 1, RealNVP can only scale and translate
     #To get most expressive flow, could use FFJORD, but it's slow, so use RQS
     flow_net_params = {'bin_range':[-10.0, 10.0], 'num_bins':32, 'hidden_dim':200}
@@ -562,13 +563,14 @@ lattice gas system as 'dimer' or 'lg' input to the 'system_type' argument.
     if self.system == 'dimer':
       self.encoder = architectures.DimerCGMapping()
       self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.8, 2.2, 40))
+      self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
     elif self.system == 'lg':
       self.encoder = architectures.LatticeGasCGMapping()
       self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.0, 1.0, 40))
+      self.decoder = architectures.FCDecoder(self.data_shape)
     else:
       raise ValueError("System type of %s not understood."%self.system
                        +"\nMust be dimer or lg")
-    self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
 
   def call(self, inputs):
     z = self.encoder(inputs)
