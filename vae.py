@@ -306,7 +306,7 @@ their paper 'Variational Lossy Autoencoder.'
 
   def __init__(self, data_shape, num_latent,
                name='priorflow_vae', arch='fc', include_vars=False,
-               beta=1.0,
+               beta=1.0, flow_type='rqs',
                **kwargs):
     super(PriorFlowVAE, self).__init__(name=name, **kwargs)
     self.data_shape = data_shape
@@ -323,16 +323,19 @@ their paper 'Variational Lossy Autoencoder.'
       self.encoder = architectures.FCEncoder(num_latent, hidden_dim=1200)
       self.decoder = architectures.FCDecoder(data_shape, return_vars=self.include_vars)
     self.sampler = architectures.SampleLatent()
-    #flow_net_params = {'num_hidden':2, 'hidden_dim':200,
-    #                   'nvp_split':True, 'activation':tf.nn.relu}
-    #self.flow = architectures.NormFlowRealNVP(num_latent,
-    #                                          kernel_initializer='truncated_normal',
-    #                                          flow_net_params=flow_net_params,
-    #                                          num_blocks=4)
-    flow_net_params = {'bin_range':[-10.0, 10.0], 'num_bins':32, 'hidden_dim':200}
-    self.flow = architectures.NormFlowRQSplineRealNVP(self.num_latent,
-                                                      kernel_initializer='truncated_normal',
-                                                      rqs_params=flow_net_params)
+    if flow_type == 'affine':
+      flow_net_params = {'num_hidden':2, 'hidden_dim':200,
+                         'nvp_split':True, 'activation':tf.nn.relu}
+      self.flow = architectures.NormFlowRealNVP(num_latent,
+                                                kernel_initializer='truncated_normal',
+                                                flow_net_params=flow_net_params,
+                                                num_blocks=4)
+    #Default is rqs, but lazily don't catch if put something other than affine or rqs
+    else:
+      flow_net_params = {'bin_range':[-10.0, 10.0], 'num_bins':32, 'hidden_dim':200}
+      self.flow = architectures.NormFlowRQSplineRealNVP(self.num_latent,
+                                                        kernel_initializer='truncated_normal',
+                                                        rqs_params=flow_net_params)
 
   def regularizer(self, kl_loss, z_mean, z_logvar, z_sampled):
     del z_mean, z_logvar, z_sampled
@@ -350,11 +353,15 @@ their paper 'Variational Lossy Autoencoder.'
     #May not actually need to do this DURING training... may be able to do after - will check
     #If do after, MUST do really well before actually using model in MC simulations
     #Feels weird, though, because if don't do, completely leave off KL term...
-    z_prior, logdet = self.flow(z, reverse=True)
-    #Estimate the KL divergence - should return average KL over batch
-    kl_loss = losses.estimate_gaussian_kl(z_prior, z, z_mean, z_logvar)
-    #And SUBTRACT the average log determinant for the flow transformation
-    kl_loss -= tf.reduce_mean(logdet)
+    if self.beta != 0.0:
+      #This works with current style of VAE (beta-VAE), but if switch, may not
+      z_prior, logdet = self.flow(z, reverse=True)
+      #Estimate the KL divergence - should return average KL over batch
+      kl_loss = losses.estimate_gaussian_kl(z_prior, z, z_mean, z_logvar)
+      #And SUBTRACT the average log determinant for the flow transformation
+      kl_loss -= tf.reduce_mean(logdet)
+    else:
+      kl_loss = 0.0
     reg_loss = self.regularizer(kl_loss, z_mean, z_logvar, z)
     #Add losses within here - keeps code cleaner and less confusing
     self.add_loss(reg_loss)
@@ -441,14 +448,17 @@ between the two, 'system_type' should either be 'dimer' or 'lg'.
     #So pass z through reverse flow to estimate likelihood
     #Should be able to do this AFTER training if like, but testing that idea out
     #If do after, MUST do really well before actually using model in MC simulations
-    z_prior, logdet = self.flow(z, reverse=True)
-    #Estimate (negative) log likelihood of the prior
-    logp_z = tf.reduce_mean(0.5*tf.reduce_sum(tf.square(z_prior)
-                                              + tf.math.log(2.0*math.pi),
-                                              axis=1))
-    #And SUBTRACT the average log determinant for the flow transformation
-    logp_z -= tf.reduce_mean(logdet)
-#    logp_z = 0.0
+    if self.beta != 0.0:
+      #If regularization is zero, save time on the calculation
+      z_prior, logdet = self.flow(z, reverse=True)
+      #Estimate (negative) log likelihood of the prior
+      logp_z = tf.reduce_mean(0.5*tf.reduce_sum(tf.square(z_prior)
+                                                + tf.math.log(2.0*math.pi),
+                                                axis=1))
+      #And SUBTRACT the average log determinant for the flow transformation
+      logp_z -= tf.reduce_mean(logdet)
+    else:
+      logp_z = 0.0
     reg_loss = self.beta*logp_z
     #Add losses within here - keeps code cleaner and less confusing
     self.add_loss(reg_loss)

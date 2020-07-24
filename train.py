@@ -10,6 +10,10 @@ from libVAE import dataloaders, losses, vae
 import numpy as np
 import tensorflow as tf
 
+#While training, ignore warnings that take up way too much space
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+tf.get_logger().setLevel('ERROR')
+
 
 def compileModel(model):
   """Compiles a model with a defined optimizer and loss function.
