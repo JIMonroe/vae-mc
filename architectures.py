@@ -993,3 +993,51 @@ number of coefficients.
     return self.beta*coeff_derivs
 
 
+class AutoregressiveDecoder(tf.keras.layers.Layer):
+  """Fully connected encoder with autoregressive network right before prediction.
+
+  Args:
+    latent_tensor: Input tensor to connect decoder to.
+    out_shape: Shape of the data.
+
+  Returns:
+    Output tensor of shape (None, 64, 64, num_channels) with the [0,1] pixel
+    intensities.
+  """
+
+  def __init__(self, out_shape, name='decoder',
+               hidden_dim=1200,
+               kernel_initializer='glorot_uniform',
+               return_vars=False, **kwargs):
+    super(AutoregressiveDecoder, self).__init__(name=name, **kwargs)
+    self.out_shape = out_shape
+    self.hidden_dim = hidden_dim
+    self.kernel_initializer=kernel_initializer
+    self.return_vars = return_vars
+    self.d1 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.tanh,
+                                    kernel_initializer=self.kernel_initializer)
+    self.d2 = tf.keras.layers.Dense(np.prod(out_shape), activation=tf.nn.tanh,
+                                    kernel_initializer=self.kernel_initializer)
+    if self.return_vars:
+      out_event_dims = 2
+    else:
+      out_event_dims = 1
+    self.autonet = tfp.bijectors.AutoregressiveNetwork(out_event_dims,
+                                                  event_shape=np.prod(out_shape),
+                                                  hidden_units=[self.hidden_dim,],
+                                                  activation=None,
+                                                  kernel_initializer=self.kernel_initializer)
+
+  def call(self, latent_tensor):
+    d1_out = self.d1(latent_tensor)
+    d2_out = self.d2(d1_out)
+    auto_out = self.autonet(d2_out)
+    if self.return_vars:
+      means_out, log_var_out = tf.split(auto_out, 2, axis=-1)
+      means_out = tf.reshape(means_out, shape=(-1,)+self.out_shape)
+      log_var_out = tf.reshape(log_var_out, shape=(-1,)+self.out_shape)
+      return means_out, log_var_out
+    else:
+      return tf.reshape(auto_out, shape=(-1,)+self.out_shape)
+
+
