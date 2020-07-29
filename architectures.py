@@ -1016,14 +1016,15 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
     self.return_vars = return_vars
     self.d1 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.tanh,
                                     kernel_initializer=self.kernel_initializer)
-    self.means = tf.keras.layers.Dense(np.prod(self.out_shape), activation=None,
-                                       kernel_initializer=self.kernel_initializer)
+    self.d2 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.tanh,
+                                    kernel_initializer=self.kernel_initializer)
+    self.d3 = tf.keras.layers.Dense(np.prod(self.out_shape), activation=None,
+                                    kernel_initializer=self.kernel_initializer)
     if self.return_vars:
       out_event_dims = 2
-      self.log_var = tf.keras.layers.Dense(1, activation=None,
-                                           kernel_initializer=self.kernel_initializer)
     else:
       out_event_dims = 1
+    #Create autoregressive neural network
     self.autonet = tfp.bijectors.AutoregressiveNetwork(out_event_dims,
                                                   event_shape=np.prod(self.out_shape),
                                                   hidden_units=[self.hidden_dim,],
@@ -1032,28 +1033,36 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
                                                   activation=tf.nn.tanh,
                                                   kernel_initializer=self.kernel_initializer)
 
-  def call(self, latent_tensor):
-    d1_out = self.d1(latent_tensor)
-    auto_out = self.means(d1_out)
-    means_out = tf.gather(auto_out, [0], axis=-1)
+  def create_dist(self, x):
+    """Need a function to create a sampling distribution for the autoregressive distribution.
+Will use Gaussian if return_vars is True and Bernoulli if False. Note that during training
+no sampling is performed, only calculation of probabilities, allowing gradients to work.
+    """
     if self.return_vars:
-      log_var_out = self.log_var(d1_out)
-    #Loop over dimensions to apply autoregressive property
-    for i in range(np.prod(self.out_shape)-1):
-      auto_out = self.autonet(auto_out)
-      if self.return_vars:
-        auto_out, this_log_var = tf.squeeze(tf.split(auto_out, 2, axis=-1), axis=-1)
-        log_var_out = tf.concat((log_var_out,
-                                 tf.gather(this_log_var, [i+1], axis=-1)),
-                                 axis=-1)
-      else:
-        auto_out = tf.squeeze(auto_out, axis=-1)
-      means_out = tf.concat((means_out, tf.gather(auto_out, [i+1], axis=-1)), axis=-1)
-    means_out = tf.reshape(means_out, shape=(-1,)+self.out_shape)
-    if self.return_vars:
-      log_var_out = tf.reshape(log_var_out, shape=(-1,)+self.out_shape)
-      return means_out, log_var_out
+      means, logvars = tf.squeeze(tf.split(self.autonet(x), 2, axis=-1), axis=-1)
+      base_dist = tfp.distributions.Normal(means, tf.exp(0.5*logvars), dtype='float32')
     else:
-      return means_out
+      logits = tf.squeeze(self.autonet(x), axis=-1)
+      base_dist = tfp.distributions.Bernoulli(logits=logits, dtype='float32')
+    this_dist = tfp.distributions.Independent(base_dist, reinterpreted_batch_ndims=1)
+    return this_dist
+
+  def call(self, latent_tensor, training=True):
+    #First just convert from latent to full-dimensional space
+    d1_out = self.d1(latent_tensor)
+    d2_out = self.d2(d1_out)
+    d3_out = self.d3(d2_out)
+    #Next need to pass through autoregressive network
+    #Do this differently if training or generating configurations
+    #For training, just need information to pass to create_dist which can then get log_p
+    if training:
+      return tf.reshape(d3_out, shape=(-1,)+self.out_shape)
+    #If not training draw sample based on output of dense layers (more expensive)
+    else:
+      #Do in a loop over number of dimensions in data, sampling each based on previous
+      sample_out = self.create_dist(d3_out).sample()
+      for i in range(np.prod(self.out_shape)):
+        sample_out = self.create_dist(sample_out).sample()
+      return tf.reshape(sample_out, shape=(-1,)+self.out_shape)
 
 
