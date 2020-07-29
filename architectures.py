@@ -1016,28 +1016,44 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
     self.return_vars = return_vars
     self.d1 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.tanh,
                                     kernel_initializer=self.kernel_initializer)
-    self.d2 = tf.keras.layers.Dense(np.prod(out_shape), activation=tf.nn.tanh,
-                                    kernel_initializer=self.kernel_initializer)
+    self.means = tf.keras.layers.Dense(np.prod(self.out_shape), activation=None,
+                                       kernel_initializer=self.kernel_initializer)
     if self.return_vars:
       out_event_dims = 2
+      self.log_var = tf.keras.layers.Dense(1, activation=None,
+                                           kernel_initializer=self.kernel_initializer)
     else:
       out_event_dims = 1
     self.autonet = tfp.bijectors.AutoregressiveNetwork(out_event_dims,
-                                                  event_shape=np.prod(out_shape),
+                                                  event_shape=np.prod(self.out_shape),
                                                   hidden_units=[self.hidden_dim,],
-                                                  activation=None,
+                                                  input_order='left-to-right',
+                                                  hidden_degrees='equal',
+                                                  activation=tf.nn.tanh,
                                                   kernel_initializer=self.kernel_initializer)
 
   def call(self, latent_tensor):
     d1_out = self.d1(latent_tensor)
-    d2_out = self.d2(d1_out)
-    auto_out = self.autonet(d2_out)
+    auto_out = self.means(d1_out)
+    means_out = tf.gather(auto_out, [0], axis=-1)
     if self.return_vars:
-      means_out, log_var_out = tf.split(auto_out, 2, axis=-1)
-      means_out = tf.reshape(means_out, shape=(-1,)+self.out_shape)
+      log_var_out = self.log_var(d1_out)
+    #Loop over dimensions to apply autoregressive property
+    for i in range(np.prod(self.out_shape)-1):
+      auto_out = self.autonet(auto_out)
+      if self.return_vars:
+        auto_out, this_log_var = tf.squeeze(tf.split(auto_out, 2, axis=-1), axis=-1)
+        log_var_out = tf.concat((log_var_out,
+                                 tf.gather(this_log_var, [i+1], axis=-1)),
+                                 axis=-1)
+      else:
+        auto_out = tf.squeeze(auto_out, axis=-1)
+      means_out = tf.concat((means_out, tf.gather(auto_out, [i+1], axis=-1)), axis=-1)
+    means_out = tf.reshape(means_out, shape=(-1,)+self.out_shape)
+    if self.return_vars:
       log_var_out = tf.reshape(log_var_out, shape=(-1,)+self.out_shape)
       return means_out, log_var_out
     else:
-      return tf.reshape(auto_out, shape=(-1,)+self.out_shape)
+      return means_out
 
 
