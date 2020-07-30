@@ -1018,12 +1018,14 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
                                     kernel_initializer=self.kernel_initializer)
     self.d2 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.tanh,
                                     kernel_initializer=self.kernel_initializer)
-    self.d3 = tf.keras.layers.Dense(np.prod(self.out_shape), activation=None,
-                                    kernel_initializer=self.kernel_initializer)
     if self.return_vars:
       out_event_dims = 2
     else:
       out_event_dims = 1
+    #Only need network to parametrize the first degree of freedom
+    #Other parameters depend on sampled values through the autoregressive network
+    self.param0 = tf.keras.layers.Dense(out_event_dims, activation=None,
+                                        kernel_initializer=self.kernel_initializer)
     #Create autoregressive neural network
     self.autonet = tfp.bijectors.AutoregressiveNetwork(out_event_dims,
                                                   event_shape=np.prod(self.out_shape),
@@ -1033,17 +1035,19 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
                                                   activation=tf.nn.tanh,
                                                   kernel_initializer=self.kernel_initializer)
 
-  def create_dist(self, x):
+  def create_dist(self, params):
     """Need a function to create a sampling distribution for the autoregressive distribution.
 Will use Gaussian if return_vars is True and Bernoulli if False. Note that during training
 no sampling is performed, only calculation of probabilities, allowing gradients to work.
+Really just want to pass parameters - can use autoregressive network outside of this.
+If return_vars is true, params should be a list of [means, logvars].
     """
     if self.return_vars:
-      means, logvars = tf.squeeze(tf.split(self.autonet(x), 2, axis=-1), axis=-1)
+      means = params[0]
+      logvars = params[1]
       base_dist = tfp.distributions.Normal(means, tf.exp(0.5*logvars))
     else:
-      logits = tf.squeeze(self.autonet(x), axis=-1)
-      base_dist = tfp.distributions.Bernoulli(logits=logits, dtype='float32')
+      base_dist = tfp.distributions.Bernoulli(logits=params, dtype='float32')
     this_dist = tfp.distributions.Independent(base_dist, reinterpreted_batch_ndims=1)
     return this_dist
 
@@ -1051,18 +1055,49 @@ no sampling is performed, only calculation of probabilities, allowing gradients 
     #First just convert from latent to full-dimensional space
     d1_out = self.d1(latent_tensor)
     d2_out = self.d2(d1_out)
-    d3_out = self.d3(d2_out)
+    param0_out = self.param0(d2_out)
+    if self.return_vars:
+      param0_out = tf.split(param0_out, 2, axis=-1)
     #Next need to pass through autoregressive network
     #Do this differently if training or generating configurations
     #For training, just need information to pass to create_dist which can then get log_p
     if training:
-      return tf.reshape(d3_out, shape=(-1,)+self.out_shape)
-    #If not training draw sample based on output of dense layers (more expensive)
+      return param0_out
+    #If not training draw sample based on output of dense layers
+    #Much more expensive because loop over dimensions
     else:
+      #To keep track of sample, pad first degree of freedom to pass through autonet
+      padding = [[0, 0], [0, np.prod(self.out_shape)-1]]
+      if self.return_vars:
+        means_out = param0_out[0]
+        logvar_out = param0_out[1]
+        sample_out = self.create_dist([tf.pad(means_out, padding),
+                                       tf.pad(logvar_out, padding)]).sample()
+      else:
+        means_out = param0_out
+        sample_out = self.create_dist(tf.pad(means_out, padding)).sample()
       #Do in a loop over number of dimensions in data, sampling each based on previous
-      sample_out = self.create_dist(d3_out).sample()
-      for i in range(np.prod(self.out_shape)):
-        sample_out = self.create_dist(sample_out).sample()
-      return tf.reshape(sample_out, shape=(-1,)+self.out_shape)
+      for i in range(1, np.prod(self.out_shape)):
+        this_means = self.autonet(sample_out)
+        if self.return_vars:
+          this_means, this_logvar = tf.split(this_means, 2, axis=-1)
+          this_logvar = tf.squeeze(this_logvar, axis=-1)
+          logvar_out = tf.concat((logvar_out, tf.gather(this_logvar, [i], axis=-1)), axis=-1)
+        this_means = tf.squeeze(this_means, axis=-1)
+        #Add on to existing parameter information
+        means_out = tf.concat((means_out, tf.gather(this_means, [i], axis=-1)), axis=-1)
+        #Sample from distribution because need values to predict next degree of freedom
+        if self.return_vars:
+          this_sample = self.create_dist([this_means, this_logvar]).sample()
+        else:
+          this_sample = self.create_dist(this_means).sample()
+        sample_out = tf.concat((sample_out[:, :i], this_sample[:, i:]), axis=-1)
+      means_out = tf.reshape(means_out, shape=(-1,)+self.out_shape)
+      sample_out = tf.reshape(sample_out, shape=(-1,)+self.out_shape)
+      if self.return_vars:
+        logvar_out = tf.reshape(logvar_out, shape=(-1,)+self.out_shape)
+        return means_out, logvar_out, sample_out
+      else:
+        return means_out, sample_out
 
 
