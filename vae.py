@@ -425,7 +425,8 @@ between the two, 'system_type' should either be 'dimer' or 'lg'.
     self.beta = beta
     if self.system == 'dimer':
       self.encoder = architectures.DimerCGMapping()
-      self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
+      #self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
+      self.decoder = architectures.AutoregressiveDecoder(self.data_shape, return_vars=True)
     elif self.system == 'lg':
       self.encoder = architectures.LatticeGasCGMapping()
       self.decoder = architectures.FCDecoder(self.data_shape)

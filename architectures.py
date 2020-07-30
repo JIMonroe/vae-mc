@@ -1040,7 +1040,7 @@ no sampling is performed, only calculation of probabilities, allowing gradients 
     """
     if self.return_vars:
       means, logvars = tf.squeeze(tf.split(self.autonet(x), 2, axis=-1), axis=-1)
-      base_dist = tfp.distributions.Normal(means, tf.exp(0.5*logvars), dtype='float32')
+      base_dist = tfp.distributions.Normal(means, tf.exp(0.5*logvars))
     else:
       logits = tf.squeeze(self.autonet(x), axis=-1)
       base_dist = tfp.distributions.Bernoulli(logits=logits, dtype='float32')

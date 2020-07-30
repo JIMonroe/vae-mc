@@ -531,18 +531,22 @@ this only returns the gradients with respect to the coefficients.
   return grads
 
 
-def AutoregressiveLoss(decoder):
+class AutoregressiveLoss(tf.keras.losses.Loss):
   """Given an autoregressive decoder, creates a loss function that will take in the decoders
 output and the true values and will return the log probability of the true values under the
 decoders autoregressive probability distribution.
   """
-  flat_fn = tf.keras.layers.Flatten()
 
-  def auto_loss(true_vals, recon_info):
-    auto_input = flat_fn(recon_info)
-    log_p = decoder.create_dist(auto_input).log_prob(true_vals)
+  def __init__(self, decoder,
+               name='auto_loss',
+               **kwargs):
+    super(AutoregressiveLoss, self).__init__(name=name, **kwargs)
+    self.decoder = decoder
+    self.flat_fn = tf.keras.layers.Flatten()
+
+  def call(self, true_vals, recon_info):
+    auto_input = self.flat_fn(recon_info)
+    log_p = self.decoder.create_dist(auto_input).log_prob(true_vals)
     return -log_p
-
-  return auto_loss
 
 
