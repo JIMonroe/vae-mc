@@ -1022,10 +1022,12 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
       out_event_dims = 2
     else:
       out_event_dims = 1
-    #Only need network to parametrize the first degree of freedom
-    #Other parameters depend on sampled values through the autoregressive network
-    self.param0 = tf.keras.layers.Dense(out_event_dims, activation=None,
-                                        kernel_initializer=self.kernel_initializer)
+    #Will predict means (and log variances) with neural net
+    #Autoregressive network will then shift means and scale variances (so shift log vars)
+    #The shifts will augment the base distribution as information on sampled configs is added
+    self.base_param = tf.keras.layers.Dense(out_event_dims*np.prod(self.out_shape),
+                                            activation=None,
+                                            kernel_initializer=self.kernel_initializer)
     #Create autoregressive neural network
     self.autonet = tfp.bijectors.AutoregressiveNetwork(out_event_dims,
                                                   event_shape=np.prod(self.out_shape),
@@ -1034,6 +1036,8 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
                                                   hidden_degrees='equal',
                                                   activation=tf.nn.tanh,
                                                   kernel_initializer=self.kernel_initializer)
+    #And will need function to flatten training data if have it
+    self.flatten = tf.keras.layers.Flatten()
 
   def create_dist(self, params):
     """Need a function to create a sampling distribution for the autoregressive distribution.
@@ -1051,53 +1055,67 @@ If return_vars is true, params should be a list of [means, logvars].
     this_dist = tfp.distributions.Independent(base_dist, reinterpreted_batch_ndims=1)
     return this_dist
 
-  def call(self, latent_tensor, training=True):
+  def call(self, latent_tensor, train_data=None):
     #First just convert from latent to full-dimensional space
     d1_out = self.d1(latent_tensor)
     d2_out = self.d2(d1_out)
-    param0_out = self.param0(d2_out)
+    param_mean = self.base_param(d2_out)
     if self.return_vars:
-      param0_out = tf.split(param0_out, 2, axis=-1)
+      param_mean, param_logvar = tf.split(param_mean, 2, axis=-1)
     #Next need to pass through autoregressive network
     #Do this differently if training or generating configurations
-    #For training, just need information to pass to create_dist which can then get log_p
-    if training:
-      return param0_out
+    #If training, training data should be provided, which will be passed through autonet
+    #The result will be the parameters to be used to evaluate log probabilities of the data
+    if train_data is not None:
+      mean_shift = self.autonet(self.flatten(train_data))
+      if self.return_vars:
+        mean_shift, logvar_shift = tf.squeeze(tf.split(mean_shift, 2, axis=-1), axis=-1)
+        mean_out = param_mean + mean_shift
+        logvar_out = param_logvar + logvar_shift
+        return mean_out, logvar_out
+      else:
+        mean_out = param_mean + tf.squeeze(mean_shift, axis=-1)
+        return mean_out
     #If not training draw sample based on output of dense layers
     #Much more expensive because loop over dimensions
     else:
       #To keep track of sample, pad first degree of freedom to pass through autonet
+      mean_out = param_mean[:, :1]
       padding = [[0, 0], [0, np.prod(self.out_shape)-1]]
       if self.return_vars:
-        means_out = param0_out[0]
-        logvar_out = param0_out[1]
-        sample_out = self.create_dist([tf.pad(means_out, padding),
+        logvar_out = param_logvar[:, :1]
+        sample_out = self.create_dist([tf.pad(mean_out, padding),
                                        tf.pad(logvar_out, padding)]).sample()
       else:
-        means_out = param0_out
-        sample_out = self.create_dist(tf.pad(means_out, padding)).sample()
+        sample_out = self.create_dist(tf.pad(mean_out, padding)).sample()
       #Do in a loop over number of dimensions in data, sampling each based on previous
       for i in range(1, np.prod(self.out_shape)):
-        this_means = self.autonet(sample_out)
+        mean_shift = self.autonet(sample_out)
         if self.return_vars:
-          this_means, this_logvar = tf.split(this_means, 2, axis=-1)
-          this_logvar = tf.squeeze(this_logvar, axis=-1)
-          logvar_out = tf.concat((logvar_out, tf.gather(this_logvar, [i], axis=-1)), axis=-1)
-        this_means = tf.squeeze(this_means, axis=-1)
+          mean_shift, logvar_shift = tf.split(mean_shift, 2, axis=-1)
+          logvar_shift = tf.squeeze(logvar_shift, axis=-1)
+          this_logvar = param_logvar + logvar_shift
+          logvar_out = tf.concat((logvar_out,
+                                  tf.gather(this_logvar, [i], axis=-1)),
+                                  axis=-1)
         #Add on to existing parameter information
-        means_out = tf.concat((means_out, tf.gather(this_means, [i], axis=-1)), axis=-1)
+        mean_shift = tf.squeeze(mean_shift, axis=-1)
+        this_mean = param_mean + mean_shift
+        mean_out = tf.concat((mean_out,
+                              tf.gather(this_mean, [i], axis=-1)),
+                              axis=-1)
         #Sample from distribution because need values to predict next degree of freedom
         if self.return_vars:
-          this_sample = self.create_dist([this_means, this_logvar]).sample()
+          this_sample = self.create_dist([this_mean, this_logvar]).sample()
         else:
-          this_sample = self.create_dist(this_means).sample()
+          this_sample = self.create_dist(this_mean).sample()
         sample_out = tf.concat((sample_out[:, :i], this_sample[:, i:]), axis=-1)
-      means_out = tf.reshape(means_out, shape=(-1,)+self.out_shape)
+      mean_out = tf.reshape(mean_out, shape=(-1,)+self.out_shape)
       sample_out = tf.reshape(sample_out, shape=(-1,)+self.out_shape)
       if self.return_vars:
         logvar_out = tf.reshape(logvar_out, shape=(-1,)+self.out_shape)
-        return means_out, logvar_out, sample_out
+        return mean_out, logvar_out, sample_out
       else:
-        return means_out, sample_out
+        return mean_out, sample_out
 
 

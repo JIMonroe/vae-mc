@@ -542,17 +542,14 @@ decoders autoregressive probability distribution.
                **kwargs):
     super(AutoregressiveLoss, self).__init__(name=name, **kwargs)
     self.decoder = decoder
-    self.flat_fn = tf.keras.layers.Flatten()
 
   def call(self, true_vals, recon_info):
-    auto_input = self.flat_fn(true_vals)
+    flat_true = self.decoder.flatten(true_vals)
     if self.decoder.return_vars:
-      dist_params = tf.unstack(self.decoder.autonet(auto_input), axis=-1)
-      dist_params = [tf.concat((info, dist_params[i][:, 1:]), axis=-1)
-                     for i, info in enumerate(recon_info)]
+      flat_recon = [self.decoder.flatten(info) for info in recon_info]
     else:
-      dist_params = tf.squeeze(self.decoder.autonet(auto_input), axis=-1)
-    log_p = self.decoder.create_dist(dist_params).log_prob(auto_input)
+      flat_recon = self.decoder.flatten(recon_info)
+    log_p = self.decoder.create_dist(flat_recon).log_prob(flat_true)
     return -log_p
 
 

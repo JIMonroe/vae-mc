@@ -305,12 +305,14 @@ their paper 'Variational Lossy Autoencoder.'
   """
 
   def __init__(self, data_shape, num_latent,
-               name='priorflow_vae', arch='fc', include_vars=False,
+               name='priorflow_vae', arch='fc',
+               autoregress=False, include_vars=False,
                beta=1.0, flow_type='rqs',
                **kwargs):
     super(PriorFlowVAE, self).__init__(name=name, **kwargs)
     self.data_shape = data_shape
     self.num_latent = num_latent
+    self.autoregress = autoregress
     self.include_vars = include_vars
     self.beta = beta
     #By default, use fully-connect (fc) architecture for neural nets
@@ -321,7 +323,11 @@ their paper 'Variational Lossy Autoencoder.'
       self.decoder = architectures.DeconvDecoder(data_shape)
     else:
       self.encoder = architectures.FCEncoder(num_latent, hidden_dim=1200)
-      self.decoder = architectures.FCDecoder(data_shape, return_vars=self.include_vars)
+      if self.autoregress:
+        self.decoder = architectures.AutoregressiveDecoder(data_shape,
+                                                           return_vars=self.include_vars)
+      else:
+        self.decoder = architectures.FCDecoder(data_shape, return_vars=self.include_vars)
     self.sampler = architectures.SampleLatent()
     if flow_type == 'affine':
       flow_net_params = {'num_hidden':2, 'hidden_dim':200,
@@ -342,11 +348,14 @@ their paper 'Variational Lossy Autoencoder.'
     #For basic VAE, beta = 1.0, but want ability to change it
     return self.beta * kl_loss
 
-  def call(self, inputs):
+  def call(self, inputs, training=False):
     z_mean, z_logvar = self.encoder(inputs)
     z = self.sampler(z_mean, z_logvar)
     #With flow only on prior, z passes directly through
-    reconstructed = self.decoder(z)
+    if self.autoregress and training:
+      reconstructed = self.decoder(z, train_data=inputs)
+    else:
+      reconstructed = self.decoder(z)
     #Note that if include_vars is True reconstructed will be a tuple of (means, log_vars)
     #Before estimating KL divergence, pass z through inverse flow
     #(forward flow is used during generation from a standard normal)
@@ -416,20 +425,27 @@ between the two, 'system_type' should either be 'dimer' or 'lg'.
   """
 
   def __init__(self, data_shape, system_type,
+               autoregress=False,
                num_latent=1, name='cgmodel', beta=1.0,
                **kwargs):
     super(CGModel, self).__init__(name=name, **kwargs)
     self.data_shape = data_shape
     self.system = system_type
+    self.autoregress = autoregress
     self.num_latent = num_latent
     self.beta = beta
     if self.system == 'dimer':
       self.encoder = architectures.DimerCGMapping()
-      #self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
-      self.decoder = architectures.AutoregressiveDecoder(self.data_shape, return_vars=True)
+      if self.autoregress:
+        self.decoder = architectures.AutoregressiveDecoder(self.data_shape, return_vars=True)
+      else:
+        self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
     elif self.system == 'lg':
       self.encoder = architectures.LatticeGasCGMapping()
-      self.decoder = architectures.FCDecoder(self.data_shape)
+      if self.autoregress:
+        self.decoder = architectures.AutoregressiveDecoder(self.data_shape)
+      else:
+        self.decoder = architectures.FCDecoder(self.data_shape)
     else:
       raise ValueError("System type of %s not understood."%self.system
                        +"\nMust be dimer or lg")
@@ -440,10 +456,13 @@ between the two, 'system_type' should either be 'dimer' or 'lg'.
                                                       kernel_initializer='truncated_normal',
                                                       rqs_params=flow_net_params)
 
-  def call(self, inputs):
+  def call(self, inputs, training=False):
     z = self.encoder(inputs)
     #With flow only on prior, z passes directly through
-    reconstructed = self.decoder(z)
+    if self.autoregress and training:
+      reconstructed = self.decoder(z, train_data=inputs)
+    else:
+      reconstructed = self.decoder(z)
     #In this model, no KL divergence, but still want to maximize likelihood of P(z)
     #Here we define P(z) as a flow over a standard normal prior
     #So pass z through reverse flow to estimate likelihood
@@ -478,28 +497,39 @@ lattice gas system as 'dimer' or 'lg' input to the 'system_type' argument.
   """
 
   def __init__(self, data_shape, system_type,
+               autoregress=False,
                num_latent=1, name='srelmodel', beta=1.0,
                **kwargs):
     super(SrelModel, self).__init__(name=name, **kwargs)
     self.data_shape = data_shape
     self.system = system_type
+    self.autoregress = autoregress
     self.num_latent = num_latent
     self.beta = beta
     if self.system == 'dimer':
       self.encoder = architectures.DimerCGMapping()
       self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.8, 2.2, 40))
-      self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
+      if self.autoregress:
+        self.decoder = architectures.AutoregressiveDecoder(self.data_shape, return_vars=True)
+      else:
+        self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
     elif self.system == 'lg':
       self.encoder = architectures.LatticeGasCGMapping()
       self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.0, 1.0, 40))
-      self.decoder = architectures.FCDecoder(self.data_shape)
+      if self.autoregress:
+        self.decoder = architectures.AutoregressiveDecoder(self.data_shape)
+      else:
+        self.decoder = architectures.FCDecoder(self.data_shape)
     else:
       raise ValueError("System type of %s not understood."%self.system
                        +"\nMust be dimer or lg")
 
-  def call(self, inputs):
+  def call(self, inputs, training=False):
     z = self.encoder(inputs)
-    reconstructed = self.decoder(z)
+    if self.autoregress and training:
+      reconstructed = self.decoder(z, train_data=inputs)
+    else:
+      reconstructed = self.decoder(z)
     #In this model, no KL divergence, but still want to maximize likelihood of P(z)
     #This is equivalent to the Srel coarse-graining problem
     #With this type of problem cannot compute loss directly, but do know gradients

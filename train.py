@@ -210,10 +210,10 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #loss_fn = tf.keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = losses.ReconLoss()
   #loss_fn = losses.diag_gaussian_loss
-  #loss_fn = losses.ReconLoss(loss_fn=losses.diag_gaussian_loss, activation=None,
-  #                           reduction=tf.keras.losses.Reduction.SUM)
-  loss_fn = losses.AutoregressiveLoss(model.decoder,
-                                      reduction=tf.keras.losses.Reduction.SUM)
+  loss_fn = losses.ReconLoss(loss_fn=losses.diag_gaussian_loss, activation=None,
+                             reduction=tf.keras.losses.Reduction.SUM)
+  #loss_fn = losses.AutoregressiveLoss(model.decoder,
+  #                                    reduction=tf.keras.losses.Reduction.SUM)
 
   #Set up annealing (if desired and have beta)
   if anneal_beta_val is not None:
@@ -239,7 +239,7 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
       for ametric in model.metrics:
         ametric.reset_states()
       with tf.GradientTape() as tape:
-        reconstructed = model(x_batch_train[0])
+        reconstructed = model(x_batch_train[0], training=True)
         loss = loss_fn(x_batch_train[0], reconstructed) / x_batch_train[0].shape[0]
         loss += sum(model.losses)
         if extraLossFunc is not None:
@@ -267,7 +267,7 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
       ametric.reset_states()
     batchCount = 0.0
     for x_batch_val in valData:
-      reconstructed = model(x_batch_val[0])
+      reconstructed = model(x_batch_val[0], training=True)
       val_loss += loss_fn(x_batch_val[0], reconstructed) / x_batch_val[0].shape[0]
       val_loss += sum(model.losses)
       if extraLossFunc is not None:
@@ -673,7 +673,7 @@ def trainPriorFlowKL(model,
       for ametric in model.metrics:
         ametric.reset_states()
       with tf.GradientTape() as tape:
-        reconstructed = model(x_batch_train[0])
+        reconstructed = model(x_batch_train[0], training=True)
         kl_loss = sum(model.losses)
 
       grads = tape.gradient(kl_loss, model.flow.trainable_weights)
@@ -697,7 +697,7 @@ def trainPriorFlowKL(model,
       ametric.reset_states()
     batchCount = 0.0
     for x_batch_val in valData:
-      reconstructed = model(x_batch_val[0])
+      reconstructed = model(x_batch_val[0], training=True)
       val_loss += loss_fn(x_batch_val[0], reconstructed) / x_batch_val[0].shape[0]
       val_kl_loss += sum(model.losses)
       batchCount += 1.0
