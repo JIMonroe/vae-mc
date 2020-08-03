@@ -1055,6 +1055,57 @@ If return_vars is true, params should be a list of [means, logvars].
     this_dist = tfp.distributions.Independent(base_dist, reinterpreted_batch_ndims=1)
     return this_dist
 
+  def create_sample(self, param_mean, param_logvar=None, sample_only=True):
+    """Convenient to have a function that, given a base parameter set, samples from
+the autoregressive distribution by looping over the degress of freedom. Must use during
+generation (no training data provided), but useful to have at other times as well.
+    """
+    #To keep track of sample, pad first degree of freedom to pass through autonet
+    mean_out = param_mean[:, :1]
+    padding = [[0, 0], [0, np.prod(self.out_shape)-1]]
+    #Below will fail if return_vars is True but param_logvar is not specified!
+    if self.return_vars:
+      logvar_out = param_logvar[:, :1]
+      sample_out = self.create_dist([tf.pad(mean_out, padding),
+                                     tf.pad(logvar_out, padding)]).sample()
+    else:
+      sample_out = self.create_dist(tf.pad(mean_out, padding)).sample()
+    #Do in a loop over number of dimensions in data, sampling each based on previous
+    for i in range(1, np.prod(self.out_shape)):
+      mean_shift = self.autonet(sample_out)
+      if self.return_vars:
+        mean_shift, logvar_shift = tf.split(mean_shift, 2, axis=-1)
+        logvar_shift = tf.squeeze(logvar_shift, axis=-1)
+        this_logvar = param_logvar + logvar_shift
+        logvar_out = tf.concat((logvar_out,
+                                tf.gather(this_logvar, [i], axis=-1)),
+                                axis=-1)
+      #Add on to existing parameter information
+      mean_shift = tf.squeeze(mean_shift, axis=-1)
+      this_mean = param_mean + mean_shift
+      mean_out = tf.concat((mean_out,
+                            tf.gather(this_mean, [i], axis=-1)),
+                            axis=-1)
+      #Sample from distribution because need values to predict next degree of freedom
+      if self.return_vars:
+        this_sample = self.create_dist([this_mean, this_logvar]).sample()
+      else:
+        this_sample = self.create_dist(this_mean).sample()
+      sample_out = tf.concat((sample_out[:, :i], this_sample[:, i:]), axis=-1)
+    mean_out = tf.reshape(mean_out, shape=(-1,)+self.out_shape)
+    sample_out = tf.reshape(sample_out, shape=(-1,)+self.out_shape)
+    if self.return_vars:
+      logvar_out = tf.reshape(logvar_out, shape=(-1,)+self.out_shape)
+      if sample_only:
+        return sample_out
+      else:
+        return mean_out, logvar_out, sample_out
+    else:
+      if sample_only:
+        return sample_out
+      else:
+        return mean_out, sample_out
+
   def call(self, latent_tensor, train_data=None):
     #First just convert from latent to full-dimensional space
     d1_out = self.d1(latent_tensor)
@@ -1079,43 +1130,9 @@ If return_vars is true, params should be a list of [means, logvars].
     #If not training draw sample based on output of dense layers
     #Much more expensive because loop over dimensions
     else:
-      #To keep track of sample, pad first degree of freedom to pass through autonet
-      mean_out = param_mean[:, :1]
-      padding = [[0, 0], [0, np.prod(self.out_shape)-1]]
       if self.return_vars:
-        logvar_out = param_logvar[:, :1]
-        sample_out = self.create_dist([tf.pad(mean_out, padding),
-                                       tf.pad(logvar_out, padding)]).sample()
+        return self.create_sample(param_mean, param_logvar, sample_only=False)
       else:
-        sample_out = self.create_dist(tf.pad(mean_out, padding)).sample()
-      #Do in a loop over number of dimensions in data, sampling each based on previous
-      for i in range(1, np.prod(self.out_shape)):
-        mean_shift = self.autonet(sample_out)
-        if self.return_vars:
-          mean_shift, logvar_shift = tf.split(mean_shift, 2, axis=-1)
-          logvar_shift = tf.squeeze(logvar_shift, axis=-1)
-          this_logvar = param_logvar + logvar_shift
-          logvar_out = tf.concat((logvar_out,
-                                  tf.gather(this_logvar, [i], axis=-1)),
-                                  axis=-1)
-        #Add on to existing parameter information
-        mean_shift = tf.squeeze(mean_shift, axis=-1)
-        this_mean = param_mean + mean_shift
-        mean_out = tf.concat((mean_out,
-                              tf.gather(this_mean, [i], axis=-1)),
-                              axis=-1)
-        #Sample from distribution because need values to predict next degree of freedom
-        if self.return_vars:
-          this_sample = self.create_dist([this_mean, this_logvar]).sample()
-        else:
-          this_sample = self.create_dist(this_mean).sample()
-        sample_out = tf.concat((sample_out[:, :i], this_sample[:, i:]), axis=-1)
-      mean_out = tf.reshape(mean_out, shape=(-1,)+self.out_shape)
-      sample_out = tf.reshape(sample_out, shape=(-1,)+self.out_shape)
-      if self.return_vars:
-        logvar_out = tf.reshape(logvar_out, shape=(-1,)+self.out_shape)
-        return mean_out, logvar_out, sample_out
-      else:
-        return mean_out, sample_out
+        return self.create_sample(param_mean, sample_only=False)
 
 

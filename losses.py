@@ -221,13 +221,13 @@ the price of having sharper gradients in your optimization.
   return tf.math.sigmoid(beta*(logits + tf.math.log(eps) - tf.math.log(1.0-eps)))
 
 
-def sampled_dimer_MSE_loss(true_confs, recon_info):
+def sampled_dimer_MSE_loss(true_confs, recon_info, sampler=gaussian_sampler):
   """Adds on sampling configuration from means and log variances to dimer energy calculation.
 Then compares energies of samples (reconstructions) to those of actual configurations via MSE.
   """
   means = recon_info[0]
   logvars = recon_info[1]
-  recon_confs = gaussian_sampler(means, logvars)
+  recon_confs = sampler(means, logvars)
   recon_energy = dimerHamiltonian(recon_confs)
   true_energy = dimerHamiltonian(true_confs)
   return tf.keras.losses.mse(true_energy, recon_energy)
