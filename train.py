@@ -188,9 +188,9 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #Would still like to provide a wrapper in dataloaders.py
   #Will make more generalizable in case data format changes
   #But, something weird with batching happens if you use keras loss functions
-  #trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
-  trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
-                                                 dset='all', permute=True)#, center_and_whiten=True)
+  trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
+  #trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
+  #                                               dset='all', permute=True)#, center_and_whiten=True)
   #trainData = dataloaders.raw_image_data(data_file)
   #trainData, valData = dataloaders.dsprites_data(batch_size, val_frac=0.01)
 
@@ -205,13 +205,13 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
                                       )
 
   #Specify the loss function we want to use
-  #loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True,
-  #                                reduction=tf.keras.losses.Reduction.SUM)
+  loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True,
+                                  reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = tf.keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = losses.ReconLoss()
   #loss_fn = losses.diag_gaussian_loss
-  loss_fn = losses.ReconLoss(loss_fn=losses.diag_gaussian_loss, activation=None,
-                             reduction=tf.keras.losses.Reduction.SUM)
+  #loss_fn = losses.ReconLoss(loss_fn=losses.diag_gaussian_loss, activation=None,
+  #                           reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = losses.AutoregressiveLoss(model.decoder,
   #                                    reduction=tf.keras.losses.Reduction.SUM)
 
@@ -636,9 +636,9 @@ def trainPriorFlowKL(model,
   print("Model set up and ready to train.")
 
   #Want to load in data
-  #trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
-  trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
-                                                 dset='all', permute=True)#, center_and_whiten=True)
+  trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
+  #trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
+  #                                               dset='all', permute=True)#, center_and_whiten=True)
   #trainData = dataloaders.raw_image_data(data_file)
   #trainData, valData = dataloaders.dsprites_data(batch_size, val_frac=0.01)
 
@@ -654,13 +654,13 @@ def trainPriorFlowKL(model,
 
   #Specify a loss function we want to use just as a check
   #Will really just train based on KL divergence reported by model
-  #loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True,
-  #                                reduction=tf.keras.losses.Reduction.SUM)
+  loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True,
+                                  reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = tf.keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = losses.ReconLoss()
   #loss_fn = losses.diag_gaussian_loss
-  loss_fn = losses.ReconLoss(loss_fn=losses.diag_gaussian_loss, activation=None,
-                             reduction=tf.keras.losses.Reduction.SUM)
+  #loss_fn = losses.ReconLoss(loss_fn=losses.diag_gaussian_loss, activation=None,
+  #                           reduction=tf.keras.losses.Reduction.SUM)
 
   print("Beginning training at: %s"%time.ctime())
 
@@ -754,9 +754,9 @@ def trainSrelCG(model,
   print("Model set up and ready to train.")
 
   #Want to load in data
-  #trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
-  trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
-                                                 dset='all', permute=True)#, center_and_whiten=True)
+  trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
+  #trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
+  #                                               dset='all', permute=True)#, center_and_whiten=True)
   #trainData = dataloaders.raw_image_data(data_file)
   #trainData, valData = dataloaders.dsprites_data(batch_size, val_frac=0.01)
 
@@ -782,7 +782,7 @@ def trainSrelCG(model,
     #Iterate over batches in the dataset
     for step, x_batch_train in enumerate(trainData):
       z = model.encoder(x_batch_train[0]).numpy()
-      grads = losses.SrelLossGrad(np.squeeze(z), mc_move_func, model.Ucg,
+      grads = losses.SrelLossGrad(np.squeeze(z, axis=-1), mc_move_func, model.Ucg,
                                   mc_noise=0.1, beta=1.0)
       optimizer.apply_gradients(zip([grads], model.Ucg.trainable_weights))
 
@@ -798,7 +798,7 @@ def trainSrelCG(model,
     batchCount = 0.0
     for x_batch_val in valData:
       z = model.encoder(x_batch_val[0]).numpy()
-      val_grad += np.max(losses.SrelLossGrad(np.squeeze(z), mc_move_func, model.Ucg,
+      val_grad += np.max(losses.SrelLossGrad(np.squeeze(z, axis=-1), mc_move_func, model.Ucg,
                                              mc_noise=0.1, beta=1.0))
       batchCount += 1.0
     val_grad /= batchCount

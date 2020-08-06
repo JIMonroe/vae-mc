@@ -950,8 +950,8 @@ class LatticeGasCGMapping(tf.keras.layers.Layer):
 
   def call(self, x_input):
     n = tf.reduce_sum(x_input, axis=np.arange(1, len(x_input.shape)))
-    dens = n / tf.reduce_prod(x_input.shape[1:])
-    return dens
+    dens = n / tf.cast(tf.reduce_prod(x_input.shape[1:]), 'float32')
+    return tf.reshape(dens, dens.shape+(1,))
 
 
 class SplinePotential(tf.keras.layers.Layer):
@@ -1121,11 +1121,12 @@ generation (no training data provided), but useful to have at other times as wel
       mean_shift = self.autonet(self.flatten(train_data))
       if self.return_vars:
         mean_shift, logvar_shift = tf.squeeze(tf.split(mean_shift, 2, axis=-1), axis=-1)
-        mean_out = param_mean + mean_shift
-        logvar_out = param_logvar + logvar_shift
+        mean_out = tf.reshape(param_mean + mean_shift, shape=(-1,)+self.out_shape)
+        logvar_out = tf.reshape(param_logvar + logvar_shift, shape=(-1,)+self.out_shape)
         return mean_out, logvar_out
       else:
-        mean_out = param_mean + tf.squeeze(mean_shift, axis=-1)
+        mean_out = tf.reshape(param_mean + tf.squeeze(mean_shift, axis=-1),
+                              shape=(-1,)+self.out_shape)
         return mean_out
     #If not training draw sample based on output of dense layers
     #Much more expensive because loop over dimensions
