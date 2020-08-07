@@ -977,6 +977,8 @@ graining.
     """For the given positions, returns the spline values at those positions. Outside of
 the spline range, extrapolation is used (see scipy.interpolate.BSpline).
     """
+    #Always make sure using latest coefficients
+    self.bspline.c = self.coeffs.numpy().astype('float64')
     return self.beta*self.bspline(x.numpy())
 
   def get_coeff_derivs(self, x):
@@ -984,6 +986,9 @@ the spline range, extrapolation is used (see scipy.interpolate.BSpline).
 the input positions. The result is NxM where N is the number of input positions and M is the
 number of coefficients.
     """
+    #Always make sure using latest coefficients
+    self.bspline.c = self.coeffs.numpy().astype('float64')
+    #Obtain derivatives by looping over setting difference coefficients to zero
     coeff_derivs = np.zeros((x.shape[0], self.coeffs.shape[0]))
     temp_coeffs = np.eye(self.coeffs.shape[0])
     for i, cvec in enumerate(temp_coeffs):
