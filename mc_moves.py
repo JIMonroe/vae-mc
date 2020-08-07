@@ -158,12 +158,22 @@ configuration, will return it and its associated log probability given z. If mul
 are provided (first dimension is not 1) then one x configuration is returned for each z.
   """
   #Generate the configuration
-  vae_output = vae_model.decoder(z)
+  if xSel is not None and vae_model.autoregress:
+    vae_output = vae_model.decoder(z, train_data=tf.cast(xSel, 'float32'))
+  else:
+    vae_output = vae_model.decoder(z)
+
   if activation is not None:
     vae_output = activation(vae_output)
 
   if xSel is not None:
-    xConf = xSel
+    xConf = tf.cast(xSel, 'float32')
+  elif vae_model.autoregress:
+    xConf = vae_output[-1]
+    if len(vae_output) > 2: #Will be gaussian model, then
+      vae_output = vae_output[:-1]
+    else:
+      vae_output = vae_output[0]
   else:
     if isinstance(vae_output, (tuple, list)):
       xConf = sampler_func(*vae_output).numpy()
