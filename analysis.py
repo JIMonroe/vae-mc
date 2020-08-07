@@ -78,11 +78,17 @@ def plotLatent(model, dat, savePlot=False):
                             zPercentiles[5:,:]))
 
   zFig, zAx = plt.subplots(model.num_latent, 11, sharex=True, sharey=True, figsize=(10,10))
+  if  len(zAx.shape) == 1:
+    zAx = np.array([zAx])
   for i in range(model.num_latent):
     zVec = np.reshape(zMean.copy(), (1,-1))
     for j, zVal in enumerate(zPercentiles[:,i]): #Percentiles instead of std
       zVec[0,i] = zVal
-      modelOut = tf.nn.sigmoid(model.decoder(tf.cast(zVec, 'float32'))).numpy()
+      modelOut = model.decoder(tf.cast(zVec, 'float32'))
+      if isinstance(modelOut, tuple):
+        modelOut = modelOut[1]
+      else:
+        modelOut = tf.nn.sigmoid(modelOut).numpy()
       modelOut = np.squeeze(modelOut)
       randomIm = np.random.random(modelOut.shape)
       imageOut = np.array((modelOut > randomIm), dtype=int)
@@ -111,7 +117,11 @@ def plotRecons(model, dat, savePlot=False):
   for i, im in enumerate(dat):
     ax[i,0].imshow(im[:,:,0], cmap='gray_r', vmin=0.0, vmax=1.0)
     thisrecon = model(tf.cast(tf.reshape(im, (1,)+im.shape), 'float32'))
-    thisrecon = tf.nn.sigmoid(thisrecon).numpy()
+    if isinstance(thisrecon, tuple):
+      #If returns list, either not lattice gas, or autoregressive (so already 1's and 0's)
+      thisrecon = thisrecon[1]
+    else:
+      thisrecon = tf.nn.sigmoid(thisrecon).numpy()
     thisrecon = np.squeeze(thisrecon)
     randomIm = np.random.random(thisrecon.shape)
     thisrecon = np.array((thisrecon > randomIm), dtype=int)
