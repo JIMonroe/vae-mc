@@ -519,7 +519,8 @@ energy is returned.
   return cg_confs, cg_energies
 
 
-def SrelLossGrad(confs, mc_move_func, cg_pot,
+def SrelLossGrad(confs, cg_pot, cg_confs=None,
+                 mc_move_func=gaussian_move,
                  num_steps=int(1e3), mc_noise=1.0, beta=1.0):
   """Calculates the gradients of the relative entropy loss of coarse-graining. The provided
 configurations (confs) to average over should be in the coarse-grained coordinates. Note that
@@ -530,8 +531,10 @@ this only returns the gradients with respect to the coefficients.
   #First term is average over full-resolution ensemble
   full_res_avg = np.average(cg_pot.get_coeff_derivs(confs), axis=0)
   #For next term need to average over CG ensemble, so run simulation in this ensemble first
-  cg_confs, cg_energies = sim_cg(confs, cg_pot,
-                                 num_steps=num_steps, mc_noise=mc_noise, beta=beta)
+  #That is, if cg_confs are not already provided
+  if cg_confs is None:
+    cg_confs, cg_energies = sim_cg(confs, cg_pot,
+                                   num_steps=num_steps, mc_noise=mc_noise, beta=beta)
   cg_res_avg = np.average(cg_pot.get_coeff_derivs(cg_confs), axis=0)
   grads = beta*(full_res_avg - cg_res_avg)
   return grads

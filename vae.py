@@ -524,36 +524,46 @@ lattice gas system as 'dimer' or 'lg' input to the 'system_type' argument.
     else:
       raise ValueError("System type of %s not understood."%self.system
                        +"\nMust be dimer or lg")
+    #And to train Srel CG model for P(z), want to have optimizer just for that
+    self.srel_optimizer = tf.keras.optimizers.Adam(learning_rate=0.01,
+                                                   beta_1=0.9,
+                                                   beta_2=0.999,
+                                                   epsilon=1e-08)
 
   def call(self, inputs, training=False):
     z = self.encoder(inputs)
     #Want to treat CG simulation essentially as a flow
     #Necessary because will want to sample from CG simulation, then backmap directly
     #Eventually, should really move CG simulation into architectures.py as a flow layer
-    z_cg, cg_energies = losses.sim_cg(z, self.Ucg,
-                                      num_steps=int(1e3), mc_noise=0.1, beta=self.mc_beta)
     #Note that technically, the final reconstructions depend on the parameters of Ucg
     #(because of the flow)
     #However, this gradient should not show up because the spline potential is in scipy
     #and just copies the trainable weights
-    #Should be way to through both in together, but not sure
+    #Should be way to throw both in together, but not sure
     #Note, though, that the best way to train is to train on just the relative entropy first
     #Once a converged CG ensemble is achieved, then train the decoder
     #Otherwise, the decoder will have to adjust as the Srel model itself evolves
-    if self.autoregress and training:
-      reconstructed = self.decoder(z_cg, train_data=inputs)
-    else:
-      reconstructed = self.decoder(z_cg)
+    z_cg, cg_energies = losses.sim_cg(z, self.Ucg,
+                                      num_steps=int(1e3), mc_noise=0.1, beta=self.mc_beta)
+    #If training, might as well compute gradients for Ucg parameters and update
+    #(already ran CG simulation, which is expensive part)
     #In this model, no KL divergence, but still want to maximize likelihood of P(z)
     #This is equivalent to the Srel coarse-graining problem
     #With this type of problem cannot compute loss directly, but do know gradients
     #(because of difficulty in estimating partition function)
-    #As a result, no point in computing loss or gradients here
-    #Save that for a custom optimization loop
-    #But to avoid breaking other training loops, just set things to zero
+    if training:
+      grads = losses.SrelLossGrad(z, model.Ucg, cg_confs=z_cg
+                                  mc_move_func=mc_move_func,
+                                  mc_noise=0.1, beta=mc_beta)
+      self.srel_optimizer.apply_gradients(zip([grads], model.Ucg.trainable_weights))
+    #And decode
+    if self.autoregress and training:
+      reconstructed = self.decoder(z_cg, train_data=inputs)
+    else:
+      reconstructed = self.decoder(z_cg)
+    #To avoid breaking other training loops, just set things to zero
     logp_z = 0.0
     reg_loss = self.beta*logp_z
-    #Add losses within here - keeps code cleaner and less confusing
     self.add_loss(reg_loss)
     self.add_metric(tf.reduce_mean(logp_z), name='logp_z', aggregation='mean')
     self.add_metric(tf.reduce_mean(reg_loss), name='regularizer_loss', aggregation='mean')
