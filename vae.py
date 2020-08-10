@@ -498,7 +498,7 @@ lattice gas system as 'dimer' or 'lg' input to the 'system_type' argument.
 
   def __init__(self, data_shape, system_type,
                autoregress=False,
-               num_latent=1, name='srelmodel', beta=1.0,
+               num_latent=1, name='srelmodel', beta=1.0, mc_beta=1.0
                **kwargs):
     super(SrelModel, self).__init__(name=name, **kwargs)
     self.data_shape = data_shape
@@ -506,6 +506,7 @@ lattice gas system as 'dimer' or 'lg' input to the 'system_type' argument.
     self.autoregress = autoregress
     self.num_latent = num_latent
     self.beta = beta
+    self.mc_beta = mc_beta
     if self.system == 'dimer':
       self.encoder = architectures.DimerCGMapping()
       self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.8, 2.2, 40))
@@ -526,10 +527,23 @@ lattice gas system as 'dimer' or 'lg' input to the 'system_type' argument.
 
   def call(self, inputs, training=False):
     z = self.encoder(inputs)
+    #Want to treat CG simulation essentially as a flow
+    #Necessary because will want to sample from CG simulation, then backmap directly
+    #Eventually, should really move CG simulation into architectures.py as a flow layer
+    z_cg, cg_energies = losses.sim_cg(z, self.Ucg,
+                                      num_steps=int(1e3), mc_noise=0.1, beta=self.mc_beta)
+    #Note that technically, the final reconstructions depend on the parameters of Ucg
+    #(because of the flow)
+    #However, this gradient should not show up because the spline potential is in scipy
+    #and just copies the trainable weights
+    #Should be way to through both in together, but not sure
+    #Note, though, that the best way to train is to train on just the relative entropy first
+    #Once a converged CG ensemble is achieved, then train the decoder
+    #Otherwise, the decoder will have to adjust as the Srel model itself evolves
     if self.autoregress and training:
-      reconstructed = self.decoder(z, train_data=inputs)
+      reconstructed = self.decoder(z_cg, train_data=inputs)
     else:
-      reconstructed = self.decoder(z)
+      reconstructed = self.decoder(z_cg)
     #In this model, no KL divergence, but still want to maximize likelihood of P(z)
     #This is equivalent to the Srel coarse-graining problem
     #With this type of problem cannot compute loss directly, but do know gradients
