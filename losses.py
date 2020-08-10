@@ -505,6 +505,20 @@ Works for arbitrary numbers of configurations.
   return new_conf, new_energy
 
 
+def sim_cg(init_conf, energy_func,
+           num_steps=1, mc_noise=1.0, beta=1.0):
+  """Simulates in the CG ensemble according to the provided energy function for the
+specified number of steps.  A Gaussian MC move is utilized.  The final configuration and
+energy is returned.
+  """
+  cg_confs = init_conf
+  cg_energies = energy_func(cg_confs)
+  for step in range(num_steps):
+    cg_confs, cg_energies = gaussian_move(cg_confs, cg_energies, energy_func,
+                                          noise_std=mc_noise, beta=beta)
+  return cg_confs, cg_energies
+
+
 def SrelLossGrad(confs, mc_move_func, cg_pot,
                  num_steps=int(1e3), mc_noise=1.0, beta=1.0):
   """Calculates the gradients of the relative entropy loss of coarse-graining. The provided
@@ -516,16 +530,8 @@ this only returns the gradients with respect to the coefficients.
   #First term is average over full-resolution ensemble
   full_res_avg = np.average(cg_pot.get_coeff_derivs(confs), axis=0)
   #For next term need to average over CG ensemble, so run simulation in this ensemble first
-  cg_confs = confs
-  cg_energies = cg_pot(cg_confs)
-  #to_plot = np.zeros(num_steps+1)
-  #to_plot[0] = cg_confs[0]
-  for step in range(num_steps):
-    cg_confs, cg_energies = mc_move_func(cg_confs, cg_energies, cg_pot,
-                                         noise_std=mc_noise, beta=beta)
-    #to_plot[step+1] = cg_confs[0]
-  #plt.plot(to_plot)
-  #plt.show()
+  cg_confs, cg_energies = sim_cg(confs, cg_pot,
+                                 num_steps=num_steps, mc_noise=mc_noise, beta=beta)
   cg_res_avg = np.average(cg_pot.get_coeff_derivs(cg_confs), axis=0)
   grads = beta*(full_res_avg - cg_res_avg)
   return grads
