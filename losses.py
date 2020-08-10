@@ -498,8 +498,8 @@ Works for arbitrary numbers of configurations.
   new_energy = energy_func(new_conf)
   #For Gaussian noise, probability of reverse move is same as forward due to symmetry
   log_prob = -beta*(new_energy - energy)
-  rand_log = np.log(np.random.random(conf.shape[0]))
-  rej = np.where(log_prob < rand_log)[0]
+  rand_log = np.log(np.random.random(conf.shape))
+  rej = (log_prob < rand_log)
   new_conf[rej] = conf[rej]
   new_energy[rej] = energy[rej]
   return new_conf, new_energy
