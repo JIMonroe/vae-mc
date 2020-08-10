@@ -94,8 +94,8 @@ interpreting the data.
     self.prior_flow = ('prior' in vae_model.name)
 
   def __call__(self, draw_type='std_normal', zSel=None, nDraws=1):
-    #If have flow...
-    if self.flow is not None:
+    #If have flow and zSel...
+    if (self.flow is not None) and (zSel is not None):
       #If draw type is anything other than 'direct' and have prior flow, transform
       if (self.prior_flow) and (draw_type != 'direct'):
         zSel, sel_log_det_rev = self.flow(zSel, reverse=True)
@@ -113,7 +113,7 @@ interpreting the data.
     elif draw_type == 'uniform':
       z_draw, log_prob = zDrawUniform(self.minZ, self.maxZ, zSel=zSel, nDraws=nDraws)
     elif draw_type == 'direct':
-      z_draw, log_prob = zDrawDirect(self.zMeans, self.zLogvars, zSel-zSel, nDraws=nDraws)
+      z_draw, log_prob = zDrawDirect(self.zMeans, self.zLogvars, zSel=zSel, nDraws=nDraws)
     else:
       print('Draw style unknown.')
       return None
@@ -132,7 +132,7 @@ interpreting the data.
     #If have prior flow and drawing directly, can obtain log probability exactly
     #(don't need to estimate, even though already have in zDrawDirect function)
     if (self.prior_flow) and (draw_type == 'direct'):
-      z_prior, log_det = self.flow(z, reverse=True)
+      z_prior, log_det = self.flow(z_draw, reverse=True)
       prior_log_prob = -0.5*tf.reduce_sum(tf.square(z_prior)
                                           + tf.math.log(2.0*np.pi),
                                           axis=1).numpy()
@@ -214,7 +214,7 @@ are provided (first dimension is not 1) then one x configuration is returned for
   return xConf, xlogprob
 
 
-def moveVAE(currConfig, currU, vaeModel, B, energyFunc, zDrawFunc, energyParams={}, samplerParams={}, zDrawType='direct'):
+def moveVAE(currConfig, currU, vaeModel, B, energyFunc, zDrawFunc, energyParams={}, samplerParams={}, zDrawType='direct', verbose=False):
   """Performs a MC move inspired by a VAE model. zDrawFunc should be a class that can be
 called with different styles of draws for z.
   """
@@ -242,8 +242,9 @@ called with different styles of draws for z.
               + np.nan_to_num(logProbX1 - logProbX2) )
 
   #if not np.all(np.isfinite([logprobFor, logprobRev, zLogProbFor, zLogProbRev])):
-  print('Breakdown of log(P_acc):')
-  print([logPacc, -B*(newU-currU), zLogProbX1, zLogProbX2, z2LogProb, z1LogProb, logProbX2, logProbX1])
+  if verbose:
+    print('Breakdown of log(P_acc):')
+    print([logPacc, -B*(newU-currU), zLogProbX1, zLogProbX2, z2LogProb, z1LogProb, logProbX2, logProbX1])
 
   return logPacc, newConfig, newU
 
