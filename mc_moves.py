@@ -44,13 +44,11 @@ def zDrawUniform(minZ, maxZ, zSel=None, nDraws=1):
   return zval, zlogprob
 
 
-def zDrawDirect(dat_means, dat_logvars, zSel=None, nDraws=1, flow=None):
+def zDrawDirect(dat_means, dat_logvars, zSel=None, nDraws=1):
   """Draws a z value from a sample of z means and log variances output by the encoder.
 Of course assuming that the sampling is from a normal distribution.
   """
   if zSel is not None:
-    if flow is not None:
-      zSel, sel_log_det_rev = flow(zSel, reverse=True)
     if nDraws == 1:
       zval = zSel
     else:
@@ -73,9 +71,6 @@ Of course assuming that the sampling is from a normal distribution.
                                  - 0.5*np.log(2.0*np.pi) - 0.5*dat_logvars, axis=1)
   zlogprob = zlogprob - tf.math.log(tf.cast(dat_means.shape[0], 'float32'))
   zlogprob = tf.reduce_sum(zlogprob, axis=1).numpy()
-  if flow is not None:
-    zval, log_det = flow(zval)
-    zlogprob -= log_det.numpy()
   return zval, zlogprob
 
 
@@ -93,28 +88,59 @@ interpreting the data.
     self.minZ = self.trueMean-5*tf.exp(0.5*self.trueLogVar)
     self.maxZ = self.trueMean+5*tf.exp(0.5*self.trueLogVar)
     try:
-      if 'prior' not in vae_model.name:
-        self.flow = vae_model.flow
-      else:
-        self.flow = None
+      self.flow = vae_model.flow
     except AttributeError:
       self.flow = None
+    self.prior_flow = ('prior' in vae_model.name)
 
   def __call__(self, draw_type='std_normal', zSel=None, nDraws=1):
+    #If have flow...
+    if self.flow is not None:
+      #If draw type is anything other than 'direct' and have prior flow, transform
+      if (self.prior_flow) and (draw_type != 'direct'):
+        zSel, sel_log_det_rev = self.flow(zSel, reverse=True)
+      #If draw type is 'direct' and not prior flow, transform
+      elif (not self.prior_flow) and (draw_type == 'direct'):
+        zSel, sel_log_det_rev = self.flow(zSel, reverse=True)
+
+    #Now select draw type and draw
     if draw_type == 'std_normal':
-      return  zDrawNormal(tf.zeros(self.trueMean.shape),
-                          tf.zeros(self.trueLogVar.shape),
-                          zSel=zSel, nDraws=nDraws)
+      z_draw, log_prob =  zDrawNormal(tf.zeros(self.trueMean.shape),
+                                      tf.zeros(self.trueLogVar.shape),
+                                      zSel=zSel, nDraws=nDraws)
     elif draw_type == 'normal':
-      return  zDrawNormal(self.trueMean, self.trueLogVar, zSel=zSel, nDraws=nDraws)
+      z_draw, log_prob = zDrawNormal(self.trueMean, self.trueLogVar, zSel=zSel, nDraws=nDraws)
     elif draw_type == 'uniform':
-      return zDrawUniform(self.minZ, self.maxZ, zSel=zSel, nDraws=nDraws)
+      z_draw, log_prob = zDrawUniform(self.minZ, self.maxZ, zSel=zSel, nDraws=nDraws)
     elif draw_type == 'direct':
-        return zDrawDirect(self.zMeans, self.zLogvars,
-                           zSel=zSel, nDraws=nDraws, flow=self.flow)
+      z_draw, log_prob = zDrawDirect(self.zMeans, self.zLogvars, zSel-zSel, nDraws=nDraws)
     else:
       print('Draw style unknown.')
       return None
+
+    #Now transform back if needed using flow
+    if self.flow is not None:
+      #If draw type is anything other than 'direct' and have prior flow, transform
+      if (self.prior_flow) and (draw_type != 'direct'):
+        z_draw, log_det = self.flow(z_draw)
+        log_prob -= log_det.numpy()
+      #If draw type is 'direct' and not prior flow, transform
+      elif (not self.prior_flow) and (draw_type == 'direct'):
+        z_draw, log_det = self.flow(z_draw)
+        log_prob -= log_det.numpy()
+
+    #If have prior flow and drawing directly, can obtain log probability exactly
+    #(don't need to estimate, even though already have in zDrawDirect function)
+    if (self.prior_flow) and (draw_type == 'direct'):
+      z_prior, log_det = self.flow(z, reverse=True)
+      prior_log_prob = -0.5*tf.reduce_sum(tf.square(z_prior)
+                                          + tf.math.log(2.0*np.pi),
+                                          axis=1).numpy()
+      prior_log_prob += log_det.numpy()
+      print("Estimated log(P) vs exact with prior flow: %f, %f"%(log_prob, prior_log_prob))
+      log_prob = prior_log_prob
+
+    return z_draw, log_prob
 
 
 def zDrawLocal(vae_model, x, zSel=None, nDraws=1):
@@ -148,7 +174,7 @@ and calculate its probability given x.
   return zval, zlogprob
 
 
-def xDrawSimple(vae_model, z, xSel=None, activation=tf.math.sigmoid,
+def xDrawSimple(vae_model, z, xSel=None, activation=None,
                 sampler_func=losses.binary_sampler, logp_func=losses.bernoulli_loss):
   """Draws a full configuration from a provided latent space coordinate, z, according
 to the provided VAE model. Does so based on the provided sampler_func, which should return
