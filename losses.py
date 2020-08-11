@@ -519,8 +519,8 @@ energy is returned.
   return cg_confs, cg_energies
 
 
-def SrelLossGrad(confs, cg_pot, cg_confs=None,
-                 mc_move_func=gaussian_move,
+def SrelLossGrad(confs, cg_pot,
+                 cg_confs=None,
                  num_steps=int(1e3), mc_noise=1.0, beta=1.0):
   """Calculates the gradients of the relative entropy loss of coarse-graining. The provided
 configurations (confs) to average over should be in the coarse-grained coordinates. Note that

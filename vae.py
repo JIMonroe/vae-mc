@@ -498,7 +498,7 @@ lattice gas system as 'dimer' or 'lg' input to the 'system_type' argument.
 
   def __init__(self, data_shape, system_type,
                autoregress=False,
-               num_latent=1, name='srelmodel', beta=1.0, mc_beta=1.0
+               num_latent=1, name='srelmodel', beta=1.0,
                **kwargs):
     super(SrelModel, self).__init__(name=name, **kwargs)
     self.data_shape = data_shape
@@ -506,7 +506,6 @@ lattice gas system as 'dimer' or 'lg' input to the 'system_type' argument.
     self.autoregress = autoregress
     self.num_latent = num_latent
     self.beta = beta
-    self.mc_beta = mc_beta
     if self.system == 'dimer':
       self.encoder = architectures.DimerCGMapping()
       self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.8, 2.2, 40))
@@ -524,44 +523,25 @@ lattice gas system as 'dimer' or 'lg' input to the 'system_type' argument.
     else:
       raise ValueError("System type of %s not understood."%self.system
                        +"\nMust be dimer or lg")
-    #And to train Srel CG model for P(z), want to have optimizer just for that
-    self.srel_optimizer = tf.keras.optimizers.Adam(learning_rate=0.01,
-                                                   beta_1=0.9,
-                                                   beta_2=0.999,
-                                                   epsilon=1e-08)
 
   def call(self, inputs, training=False):
     z = self.encoder(inputs)
-    #Want to treat CG simulation essentially as a flow
-    #Necessary because will want to sample from CG simulation, then backmap directly
-    #Eventually, should really move CG simulation into architectures.py as a flow layer
-    #Note that technically, the final reconstructions depend on the parameters of Ucg
-    #(because of the flow)
-    #However, this gradient should not show up because the spline potential is in scipy
-    #and just copies the trainable weights
-    #Should be way to throw both in together, but not sure
-    #Note, though, that the best way to train is to train on just the relative entropy first
-    #Once a converged CG ensemble is achieved, then train the decoder
-    #Otherwise, the decoder will have to adjust as the Srel model itself evolves
-    z_cg, cg_energies = losses.sim_cg(z, self.Ucg,
-                                      num_steps=int(1e3), mc_noise=0.1, beta=self.mc_beta)
-    #If training, might as well compute gradients for Ucg parameters and update
-    #(already ran CG simulation, which is expensive part)
+    #CG simulation is NOT a flow - if map from x0 to z0, want decoder to go back to x0
+    #If allow CG simulation, may end up at z1 very different from z0
+    #Then end up training decoder to map from z1 to x0... so it's NOT a flow
+    #Only want to sample from CG ensemble if generating new configurations
+    #And for any VAE class in this module, that happens outside the class
+    #So get right on with decoding
+    if self.autoregress and training:
+      reconstructed = self.decoder(z, train_data=inputs)
+    else:
+      reconstructed = self.decoder(z)
     #In this model, no KL divergence, but still want to maximize likelihood of P(z)
     #This is equivalent to the Srel coarse-graining problem
     #With this type of problem cannot compute loss directly, but do know gradients
     #(because of difficulty in estimating partition function)
-    if training:
-      grads = losses.SrelLossGrad(z, model.Ucg, cg_confs=z_cg
-                                  mc_move_func=mc_move_func,
-                                  mc_noise=0.1, beta=mc_beta)
-      self.srel_optimizer.apply_gradients(zip([grads], model.Ucg.trainable_weights))
-    #And decode
-    if self.autoregress and training:
-      reconstructed = self.decoder(z_cg, train_data=inputs)
-    else:
-      reconstructed = self.decoder(z_cg)
-    #To avoid breaking other training loops, just set things to zero
+    #MUST do this in a separate training loop, then (parameters have no interdependence anyway)
+    #To avoid breaking main training loop, just set things to zero
     logp_z = 0.0
     reg_loss = self.beta*logp_z
     self.add_loss(reg_loss)

@@ -764,8 +764,12 @@ def trainSrelCG(model,
   #Set up path for checkpoint files
   checkpoint_path = os.path.join(save_dir, 'training.ckpt')
 
-  #Specify a type of MC move to propagate CG system
-  mc_move_func = losses.gaussian_move
+  #Create optimizer - compared to other problems, can raise learning rate if want
+  optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001,
+                                       beta_1=0.9,
+                                       beta_2=0.999,
+                                       epsilon=1e-08,
+                                      )
 
   print("Beginning training at: %s"%time.ctime())
 
@@ -777,9 +781,8 @@ def trainSrelCG(model,
     for step, x_batch_train in enumerate(trainData):
       z = model.encoder(x_batch_train[0]).numpy()
       grads = losses.SrelLossGrad(np.squeeze(z, axis=-1), model.Ucg,
-                                  mc_move_func=mc_move_func,
                                   mc_noise=0.1, beta=mc_beta)
-      model.srel_optimizer.apply_gradients(zip([grads], model.Ucg.trainable_weights))
+      optimizer.apply_gradients(zip([grads], model.Ucg.trainable_weights))
 
       if step%100 == 0:
         print('\tStep %i: max_gradient=%f'%(step, np.max(grads)))
@@ -794,7 +797,6 @@ def trainSrelCG(model,
     for x_batch_val in valData:
       z = model.encoder(x_batch_val[0]).numpy()
       val_grad += np.max(losses.SrelLossGrad(np.squeeze(z, axis=-1), model.Ucg,
-                                             mc_move_func=mc_move_func,
                                              mc_noise=0.1, beta=mc_beta))
       batchCount += 1.0
     val_grad /= batchCount
