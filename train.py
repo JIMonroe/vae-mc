@@ -764,8 +764,8 @@ def trainSrelCG(model,
   #Set up path for checkpoint files
   checkpoint_path = os.path.join(save_dir, 'training.ckpt')
 
-  #Create optimizer - compared to other problems, can raise learning rate if want
-  optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001,
+  #Create optimizer - compared to other problems, can raise learning rate
+  optimizer = tf.keras.optimizers.Adam(learning_rate=0.001,
                                        beta_1=0.9,
                                        beta_2=0.999,
                                        epsilon=1e-08,
