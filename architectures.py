@@ -105,7 +105,7 @@ class ConvEncoder(tf.keras.layers.Layer):
                                      kernel_size=4,
                                      strides=2,
                                      activation=tf.nn.relu,
-                                     padding="same",
+                                     padding="valid",
                                      name="e1",
                                      kernel_initializer=self.kernel_initializer,
                                     )
@@ -229,11 +229,17 @@ class DeconvDecoder(tf.keras.layers.Layer):
   def __init__(self, out_shape, name='decoder', 
                kernel_initializer='glorot_uniform', **kwargs):
     super(DeconvDecoder, self).__init__(name=name, **kwargs)
+    #Based on output shape, figure out best starting convolution
+    #Each convolutional layer has stride of 2, so reduces by roughly factor of 2 each time
+    #Have 4 convolutional layers, so subtract from the power that gets you to the output
+    #Only works if square image
     self.out_shape = out_shape
+    self.conv_start_shape = int(2**(np.ceil(np.log(self.out_shape[0])/np.log(2.0)) - 4))
     self.kernel_initializer = kernel_initializer
     self.d1 = tf.keras.layers.Dense(256, activation=tf.nn.relu,
                                     kernel_initializer=self.kernel_initializer)
-    self.d2 = tf.keras.layers.Dense(1024, activation=tf.nn.relu,
+    self.d2 = tf.keras.layers.Dense(self.conv_start_shape*self.conv_start_shape*64,
+                                    activation=tf.nn.relu,
                                     kernel_initializer=self.kernel_initializer)
     self.d3 = tf.keras.layers.Conv2DTranspose(filters=64,
                                               kernel_size=4,
@@ -256,22 +262,26 @@ class DeconvDecoder(tf.keras.layers.Layer):
                                               padding="same",
                                               kernel_initializer=self.kernel_initializer,
                                              )
-    self.d6 = tf.keras.layers.Conv2DTranspose(filters=out_shape[2],
+    self.d6 = tf.keras.layers.Conv2DTranspose(filters=self.out_shape[2],
                                               kernel_size=4,
                                               strides=2,
-                                              padding="same",
+                                              padding="valid",
                                               kernel_initializer=self.kernel_initializer,
                                              )
 
   def call(self, latent_tensor):
     d1_out = self.d1(latent_tensor)
     d2_out = self.d2(d1_out)
-    d2_reshaped = tf.reshape(d2_out, shape=[-1, 4, 4, 64])
+    d2_reshaped = tf.reshape(d2_out, shape=[-1, self.conv_start_shape,
+                                            self.conv_start_shape, 64])
     d3_out = self.d3(d2_reshaped)
     d4_out = self.d4(d3_out)
     d5_out = self.d5(d4_out)
     d6_out = self.d6(d5_out)
-    return tf.reshape(d6_out, (-1,) + self.out_shape)
+    #return tf.reshape(d6_out, (-1,) + self.out_shape)
+    #Will now have too many output values, so throw away extras
+    #Not exactly elegant, but allows to easily change image shape
+    return d6_out[:, :self.out_shape[0], :self.out_shape[1], :]
 
 
 class FCEncoderFlow(tf.keras.layers.Layer):
