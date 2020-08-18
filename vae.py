@@ -320,7 +320,12 @@ their paper 'Variational Lossy Autoencoder.'
     self.arch = arch
     if self.arch == 'conv':
       self.encoder = architectures.ConvEncoder(num_latent)
-      self.decoder = architectures.DeconvDecoder(data_shape)
+      if self.autoregress:
+        #Not compatible with Gaussian P(x|z), so disable
+        self.include_vars = False
+        self.decoder = architectures.AutoConvDecoder(self.data_shape, self.num_latent)
+      else:
+        self.decoder = architectures.DeconvDecoder(self.data_shape)
     else:
       self.encoder = architectures.FCEncoder(num_latent, hidden_dim=1200)
       if self.autoregress:

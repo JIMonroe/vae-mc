@@ -1014,10 +1014,6 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
   Args:
     latent_tensor: Input tensor to connect decoder to.
     out_shape: Shape of the data.
-
-  Returns:
-    Output tensor of shape (None, 64, 64, num_channels) with the [0,1] pixel
-    intensities.
   """
 
   def __init__(self, out_shape, name='decoder',
@@ -1150,5 +1146,50 @@ generation (no training data provided), but useful to have at other times as wel
         return self.create_sample(param_mean, param_logvar, sample_only=False)
       else:
         return self.create_sample(param_mean, sample_only=False)
+
+
+class AutoConvDecoder(tf.keras.layers.Layer):
+  """Convolutional autoregressive decoder. Wraps PixelCNN distribution in tfp.
+
+  Args:
+    latent_tensor: Input tensor to connect decoder to.
+    out_shape: Shape of the data.
+  """
+
+  def __init__(self, out_shape, latent_dim, name='decoder',
+               kernel_initializer='glorot_uniform',
+               **kwargs):
+    super(AutoConvDecoder, self).__init__(name=name, **kwargs)
+    self.out_shape = out_shape
+    self.latent_dim = latent_dim
+    self.kernel_initializer=kernel_initializer
+    #Create convolutional autoregressive neural network - wrapping PixelCNN
+    self.pixelcnn = tfp.distributions.PixelCNN(self.out_shape,
+                                               conditional_shape=(self.latent_dim,),
+                                               num_resnet=2,
+                                               num_hierarchies=3,
+                                               num_filters=64,
+                                               num_logistic_mix=1,
+                                               receptive_field_dims=(3, 3),
+                                               dropout_p=0.3,
+                                               high=1, low=0)
+
+  def call(self, latent_tensor, train_data=None):
+    #If training data is passed, just go through the PixelCNN to get logP
+    #Return that and use a special loss function
+    if train_data is not None:
+      prob_out = self.pixelcnn.log_prob(train_data,
+                                        conditional_input=latent_tensor,
+                                        training=True)
+      return prob_out
+    #If not training draw sample based solely on latent tensor
+    #To make work with other autoregressive model outputs, need 2 returns
+    #First return should be probability of each DOF taking a value of 1
+    #But can't get at that info easily due to design of the PixelCNN, so just return 1's
+    else:
+      conf_out = self.pixelcnn.sample(latent_tensor.shape[0],
+                                      conditional_input=latent_tensor,
+                                      training=False)
+      return tf.ones(conf_out.shape), conf_out
 
 

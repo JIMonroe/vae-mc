@@ -562,3 +562,21 @@ decoders autoregressive probability distribution.
     return -log_p
 
 
+class AutoConvLoss(tf.keras.losses.Loss):
+  """Given a PixelCNN decoder, creates a loss function that will take logP of the PixelCNN's
+probability distribution along with true values and just return the logP that got passed in.
+Otherwise, replicate effort within the AutoConvDecoder layer. Just a hack so that the training
+loop requires minimal alterations.
+  """
+
+  def __init__(self, decoder,
+               name='auto_conv_loss',
+               **kwargs):
+    super(AutoConvLoss, self).__init__(name=name, **kwargs)
+    self.decoder = decoder
+
+  def call(self, true_vals, recon_info):
+    log_p = recon_info
+    return -log_p
+
+
