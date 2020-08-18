@@ -1166,12 +1166,13 @@ class AutoConvDecoder(tf.keras.layers.Layer):
     #Create convolutional autoregressive neural network - wrapping PixelCNN
     self.pixelcnn = tfp.distributions.PixelCNN(self.out_shape,
                                                conditional_shape=(self.latent_dim,),
-                                               num_resnet=2,
-                                               num_hierarchies=3,
-                                               num_filters=64,
-                                               num_logistic_mix=1,
-                                               receptive_field_dims=(3, 3),
+                                               num_resnet=1,
+                                               num_hierarchies=2,
+                                               num_filters=32,
+                                               num_logistic_mix=2,
+                                               receptive_field_dims=(4, 4),
                                                dropout_p=0.3,
+                                               dtype=tf.float32,
                                                high=1, low=0)
 
   def call(self, latent_tensor, train_data=None):

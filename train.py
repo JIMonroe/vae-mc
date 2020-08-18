@@ -205,8 +205,8 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
                                       )
 
   #Specify the loss function we want to use
-  loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True,
-                                  reduction=tf.keras.losses.Reduction.SUM)
+  #loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True,
+  #                                reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = tf.keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = losses.ReconLoss()
   #loss_fn = losses.diag_gaussian_loss
@@ -214,6 +214,8 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #                           reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = losses.AutoregressiveLoss(model.decoder,
   #                                    reduction=tf.keras.losses.Reduction.SUM)
+  loss_fn = losses.AutoConvLoss(model.decoder,
+                                reduction=tf.keras.losses.Reduction.SUM)
 
   #Set up annealing (if desired and have beta)
   if anneal_beta_val is not None:
@@ -241,6 +243,7 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
       with tf.GradientTape() as tape:
         reconstructed = model(x_batch_train[0], training=True)
         loss = loss_fn(x_batch_train[0], reconstructed) / x_batch_train[0].shape[0]
+        print(loss)
         loss += sum(model.losses)
         if extraLossFunc is not None:
           extra_loss = tf.cast(extraLossFunc(x_batch_train[0], reconstructed), 'float32')
