@@ -244,9 +244,11 @@ called with different styles of draws for z.
   #if not np.all(np.isfinite([logprobFor, logprobRev, zLogProbFor, zLogProbRev])):
   if verbose:
     print('Breakdown of log(P_acc):')
-    print([logPacc, -B*(newU-currU), zLogProbX1, zLogProbX2, z2LogProb, z1LogProb, logProbX2, logProbX1])
-
-  return logPacc, newConfig, newU
+    full_info = [logPacc, -B*(newU-currU), zLogProbX1, zLogProbX2, z2LogProb, z1LogProb, logProbX2, logProbX1]
+    print(full_info)
+    return logPacc, newConfig, newU, full_info
+  else:
+    return logPacc, newConfig, newU
 
 
 class zDrawFunc_wrap_InvNet(object):
