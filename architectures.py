@@ -1163,17 +1163,22 @@ class AutoConvDecoder(tf.keras.layers.Layer):
     self.out_shape = out_shape
     self.latent_dim = latent_dim
     self.kernel_initializer=kernel_initializer
-    #Create convolutional autoregressive neural network - wrapping PixelCNN
+    #Define PixelCNN parameters
+    pixelcnn_params = {'dropout_p':0.3,
+                       'num_resnet':1,
+                       'num_hierarchies':2,
+                       'num_filters':32,
+                       'num_logistic_mix':2,
+                       'receptive_field_dims':(4,4)}
+    #Create convolutional autoregressive neural network
+    self.autoconvnet = tfp.distributions.pixel_cnn._PixelCNNNetwork(**pixelcnn_params)
+    convnet_input_shape = [(None,)+self.out_shape, (None, self.latent_dim)]
+    self.autoconvnet.build(convnet_input_shape)
     self.pixelcnn = tfp.distributions.PixelCNN(self.out_shape,
                                                conditional_shape=(self.latent_dim,),
-                                               num_resnet=1,
-                                               num_hierarchies=2,
-                                               num_filters=32,
-                                               num_logistic_mix=2,
-                                               receptive_field_dims=(4, 4),
-                                               dropout_p=0.3,
-                                               dtype=tf.float32,
-                                               high=1, low=0)
+                                               high=1, low=0, **pixelcnn_params)
+    #Replace the PixelCNN object's network with ours so we can access trainable weights
+    self.pixelcnn.network = self.autoconvnet
 
   def call(self, latent_tensor, train_data=None):
     #If training data is passed, just go through the PixelCNN to get logP
