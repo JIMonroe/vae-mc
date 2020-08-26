@@ -75,20 +75,20 @@ class FCEncoder(tf.keras.layers.Layer):
       #Ignoring weight matrix on layer outputs
       self.e2_skip = tf.keras.layers.Dense(self.hidden_dim, activation=None,
                                            name="e2_skip", use_bias=False,
-                                           kernel_initializer=self.kernel_intitializer)
+                                           kernel_initializer=self.kernel_initializer)
       self.mean_skip = tf.keras.layers.Dense(self.num_latent, activation=None,
                                              name="mean_skip", use_bias=False,
-                                             kernel_initializer=self.kernel_intitializer)
+                                             kernel_initializer=self.kernel_initializer)
       self.var_skip = tf.keras.layers.Dense(self.num_latent, activation=None,
                                             name="var_skip", use_bias=False,
-                                            kernel_initializer=self.kernel_intitializer)
+                                            kernel_initializer=self.kernel_initializer)
 
   def call(self, input_tensor):
     flattened_out = self.flattened(input_tensor)
     e1_out = self.e1(flattened_out)
     if self.skips:
       e2_out = tf.nn.relu(self.e2(e1_out) + self.e2_skip(flattened_out))
-      means_out = self.means_out(e2_out) + self.mean_skip(flattened_out)
+      means_out = self.means(e2_out) + self.mean_skip(flattened_out)
       log_var_out = self.log_var(e2_out) + self.var_skip(flattened_out)
     else:
       e2_out = self.e2(e1_out)
@@ -868,7 +868,7 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
       #Adding skip for everything except autoregressive network
       #For that, it's better to just make it conditionally dependent on latent (same thing)
       #And that is handled above
-      self.d2_skip = tk.keras.layers.Dense(self.hidden_dim, activation=None,
+      self.d2_skip = tf.keras.layers.Dense(self.hidden_dim, activation=None,
                                            use_bias=False,
                                            kernel_initializer=self.kernel_initializer)
       self.mean_skip = tf.keras.layers.Dense(np.prod(self.out_shape), activation=None,
@@ -880,6 +880,10 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
                                               kernel_initializer=self.kernel_initializer)
 
   def build(self, input_shape):
+    if self.return_vars:
+      out_event_dims = 2
+    else:
+      out_event_dims = 1
     #If want conditional input, need to know latent dimension
     #So create in build method
     #With/without conditional input as latent space tensor if self.skips is true/false
