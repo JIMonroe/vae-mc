@@ -864,20 +864,20 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
     #And will need function to flatten training data if have it
     self.flatten = tf.keras.layers.Flatten()
 
-    if self.skips:
-      #Adding skip for everything except autoregressive network
-      #For that, it's better to just make it conditionally dependent on latent (same thing)
-      #And that is handled above
-      self.d2_skip = tf.keras.layers.Dense(self.hidden_dim, activation=None,
-                                           use_bias=False,
-                                           kernel_initializer=self.kernel_initializer)
-      self.mean_skip = tf.keras.layers.Dense(np.prod(self.out_shape), activation=None,
-                                             use_bias=False,
-                                             kernel_initializer=self.kernel_initializer)
-      if self.return_vars:
-        self.var_skip = tf.keras.layers.Dense(np.prod(self.out_shape), activation=None,
-                                              use_bias=False,
-                                              kernel_initializer=self.kernel_initializer)
+#     if self.skips:
+#       #Adding skip for everything except autoregressive network
+#       #For that, it's better to just make it conditionally dependent on latent (same thing)
+#       #And that is handled above
+#       self.d2_skip = tf.keras.layers.Dense(self.hidden_dim, activation=None,
+#                                            use_bias=False,
+#                                            kernel_initializer=self.kernel_initializer)
+#       self.mean_skip = tf.keras.layers.Dense(np.prod(self.out_shape), activation=None,
+#                                              use_bias=False,
+#                                              kernel_initializer=self.kernel_initializer)
+#       if self.return_vars:
+#         self.var_skip = tf.keras.layers.Dense(np.prod(self.out_shape), activation=None,
+#                                               use_bias=False,
+#                                               kernel_initializer=self.kernel_initializer)
 
   def build(self, input_shape):
     if self.return_vars:
@@ -984,18 +984,18 @@ generation (no training data provided), but useful to have at other times as wel
   def call(self, latent_tensor, train_data=None):
     #First just convert from latent to full-dimensional space
     d1_out = self.d1(latent_tensor)
-    if self.skips:
-      d2_out = tf.nn.relu(self.d2(d1_out) + self.d2_skip(latent_tensor))
-      param_mean = self.base_param(d2_out)
-      if self.return_vars:
-        param_mean, param_logvar = tf.split(param_mean, 2, axis=-1)
-        param_logvar += self.var_skip(latent_tensor)
-      param_mean += self.mean_skip(latent_tensor)
-    else:
-      d2_out = self.d2(d1_out)
-      param_mean = self.base_param(d2_out)
-      if self.return_vars:
-        param_mean, param_logvar = tf.split(param_mean, 2, axis=-1)
+#     if self.skips:
+#       d2_out = tf.nn.relu(self.d2(d1_out) + self.d2_skip(latent_tensor))
+#       param_mean = self.base_param(d2_out)
+#       if self.return_vars:
+#         param_mean, param_logvar = tf.split(param_mean, 2, axis=-1)
+#         param_logvar += self.var_skip(latent_tensor)
+#       param_mean += self.mean_skip(latent_tensor)
+#     else:
+    d2_out = self.d2(d1_out)
+    param_mean = self.base_param(d2_out)
+    if self.return_vars:
+      param_mean, param_logvar = tf.split(param_mean, 2, axis=-1)
     #Next need to pass through autoregressive network
     #Do this differently if training or generating configurations
     #If training, training data should be provided, which will be passed through autonet

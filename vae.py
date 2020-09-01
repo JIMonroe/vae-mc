@@ -329,7 +329,7 @@ their paper 'Variational Lossy Autoencoder.'
       else:
         self.decoder = architectures.DeconvDecoder(self.data_shape)
     else:
-      self.encoder = architectures.FCEncoder(num_latent, hidden_dim=1200, skip_connections=self.use_skips)
+      self.encoder = architectures.FCEncoder(num_latent, hidden_dim=1200)#, skip_connections=self.use_skips)
       if self.autoregress:
         self.decoder = architectures.AutoregressiveDecoder(data_shape,
                                                            return_vars=self.include_vars, skip_connections=self.use_skips)
