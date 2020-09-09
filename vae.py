@@ -308,6 +308,7 @@ their paper 'Variational Lossy Autoencoder.'
                name='priorflow_vae', arch='fc',
                autoregress=False, include_vars=False,
                beta=1.0, flow_type='rqs',
+               use_skips=True,
                **kwargs):
     super(PriorFlowVAE, self).__init__(name=name, **kwargs)
     self.data_shape = data_shape
@@ -318,6 +319,7 @@ their paper 'Variational Lossy Autoencoder.'
     #By default, use fully-connect (fc) architecture for neural nets
     #Can switch to convolutional if specify arch='conv' (won't have flow, though)
     self.arch = arch
+    self.use_skips = use_skips
     if self.arch == 'conv':
       self.encoder = architectures.ConvEncoder(num_latent)
       if self.autoregress:
@@ -330,7 +332,7 @@ their paper 'Variational Lossy Autoencoder.'
       self.encoder = architectures.FCEncoder(num_latent, hidden_dim=1200)
       if self.autoregress:
         self.decoder = architectures.AutoregressiveDecoder(data_shape,
-                                                           return_vars=self.include_vars)
+                                                           return_vars=self.include_vars, skip_connections=self.use_skips)
       else:
         self.decoder = architectures.FCDecoder(data_shape, return_vars=self.include_vars)
     self.sampler = architectures.SampleLatent()
@@ -432,6 +434,7 @@ between the two, 'system_type' should either be 'dimer' or 'lg'.
   def __init__(self, data_shape, system_type,
                autoregress=False,
                num_latent=1, name='cgmodel', beta=1.0,
+               use_skips=True,
                **kwargs):
     super(CGModel, self).__init__(name=name, **kwargs)
     self.data_shape = data_shape
@@ -439,16 +442,17 @@ between the two, 'system_type' should either be 'dimer' or 'lg'.
     self.autoregress = autoregress
     self.num_latent = num_latent
     self.beta = beta
+    self.use_skips = use_skips
     if self.system == 'dimer':
       self.encoder = architectures.DimerCGMapping()
       if self.autoregress:
-        self.decoder = architectures.AutoregressiveDecoder(self.data_shape, return_vars=True)
+        self.decoder = architectures.AutoregressiveDecoder(self.data_shape, return_vars=True, skip_connections=self.use_skips)
       else:
         self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
     elif self.system == 'lg':
       self.encoder = architectures.LatticeGasCGMapping()
       if self.autoregress:
-        self.decoder = architectures.AutoregressiveDecoder(self.data_shape)
+        self.decoder = architectures.AutoregressiveDecoder(self.data_shape, skip_connections=self.use_skips)
       else:
         self.decoder = architectures.FCDecoder(self.data_shape)
     else:
@@ -504,6 +508,7 @@ lattice gas system as 'dimer' or 'lg' input to the 'system_type' argument.
   def __init__(self, data_shape, system_type,
                autoregress=False,
                num_latent=1, name='srelmodel', beta=1.0,
+               use_skips=True,
                **kwargs):
     super(SrelModel, self).__init__(name=name, **kwargs)
     self.data_shape = data_shape
@@ -511,18 +516,19 @@ lattice gas system as 'dimer' or 'lg' input to the 'system_type' argument.
     self.autoregress = autoregress
     self.num_latent = num_latent
     self.beta = beta
+    self.use_skips = use_skips
     if self.system == 'dimer':
       self.encoder = architectures.DimerCGMapping()
       self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.8, 2.2, 40))
       if self.autoregress:
-        self.decoder = architectures.AutoregressiveDecoder(self.data_shape, return_vars=True)
+        self.decoder = architectures.AutoregressiveDecoder(self.data_shape, return_vars=True, skip_connections=self.use_skips)
       else:
         self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
     elif self.system == 'lg':
       self.encoder = architectures.LatticeGasCGMapping()
       self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.0, 1.0, 40))
       if self.autoregress:
-        self.decoder = architectures.AutoregressiveDecoder(self.data_shape)
+        self.decoder = architectures.AutoregressiveDecoder(self.data_shape, skip_connections=self.use_skips)
       else:
         self.decoder = architectures.FCDecoder(self.data_shape)
     else:
