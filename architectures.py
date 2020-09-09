@@ -840,6 +840,32 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
                                                   activation=tf.nn.tanh,
                                                   kernel_initializer=self.kernel_initializer)
 
+#  def get_truncation(self, means, coords,
+#                     hs_diam=1.1611*0.82, #Actual hard-sphere diameter multiplied by 0.82
+#                                          #Prevents overlaps causing energy over 5.65 kB*T
+#                     box_dims=np.array([[-3.0, 3.0], [-3.0, 3.0]]),
+#                     num_skip=2):
+#    """Given the means of Gaussian distributions for each coordinate and coordinate values,
+#uses an autoregressive-type model to truncate the distribution. For each mean, coordinates
+#of lower index are used to determine the low and high cutoffs for truncating its
+#distribution. These cutoffs associated with each mean are returned. If no other particles are
+#closer than the box edge locations specified by "box_dims" then those are used for
+#truncation. Note that truncation will only be performed based on the same cartesian dimension
+#of previously generated particles with similar cartesian coordinates in the other dimensions.
+#This number of cartesian coordinates is determined by the first dimension of box_dims.
+#    """
+#    #Set up upper and lower cutoffs, just using box-based cutoffs as defaults
+#    low_cuts = np.zeros(means.shape)
+#    high_cuts = np.zeros(means.shape)
+#    for i in range(box_dims.shape[0]):
+#      #Subtract or add hard-sphere radius to box lower or upper box locations
+#      low_cuts[:, i::box_dims.shape[0]] = box_dims[i, 0] - hs_diam*0.5
+#      high_cuts[:, i::box_dims.shape[0]] = box_dims[i, 1] + hs_diam*0.5
+#    #Loop over means, ignoring all dimensions for first num_skip particles
+#    for i in range(num_skip*box_dims.shape[0], means.shape, box_dims.shape[0]):
+#      #Loop over dimensions to find particle positions to use for truncation
+#      for j in range(box_dims.shape[0]):
+
   def create_dist(self, params):
     """Need a function to create a sampling distribution for the autoregressive distribution.
 Will use Gaussian if return_vars is True and Bernoulli if False. Note that during training
@@ -864,7 +890,7 @@ generation (no training data provided), but useful to have at other times as wel
     """
     if self.skips and skip_input is None:
       print("If using skip connections, need to provide latent tensor as skip_input.")
-      print("Since skip_input=None, passing to self.autonet <should> through an error.")
+      print("Since skip_input=None, passing to self.autonet <should> throw an error.")
     if not self.skips and skip_input is not None:
       print("Skip connections are not in use, but skip_input is not None.")
       print("This will result in the input being ignored, so check this.")
