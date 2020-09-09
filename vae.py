@@ -308,7 +308,7 @@ their paper 'Variational Lossy Autoencoder.'
                name='priorflow_vae', arch='fc',
                autoregress=False, include_vars=False,
                beta=1.0, flow_type='rqs',
-               use_skips=False,
+               use_skips=True,
                **kwargs):
     super(PriorFlowVAE, self).__init__(name=name, **kwargs)
     self.data_shape = data_shape
@@ -329,12 +329,12 @@ their paper 'Variational Lossy Autoencoder.'
       else:
         self.decoder = architectures.DeconvDecoder(self.data_shape)
     else:
-      self.encoder = architectures.FCEncoder(num_latent, hidden_dim=1200)#, skip_connections=self.use_skips)
+      self.encoder = architectures.FCEncoder(num_latent, hidden_dim=1200)
       if self.autoregress:
         self.decoder = architectures.AutoregressiveDecoder(data_shape,
                                                            return_vars=self.include_vars, skip_connections=self.use_skips)
       else:
-        self.decoder = architectures.FCDecoder(data_shape, return_vars=self.include_vars, skip_connections=self.use_skips)
+        self.decoder = architectures.FCDecoder(data_shape, return_vars=self.include_vars)
     self.sampler = architectures.SampleLatent()
     if flow_type == 'affine':
       flow_net_params = {'num_hidden':2, 'hidden_dim':200,

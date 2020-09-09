@@ -54,13 +54,11 @@ class FCEncoder(tf.keras.layers.Layer):
 
   def __init__(self, num_latent, name='encoder', hidden_dim=1200,
                kernel_initializer='glorot_uniform',
-               skip_connections=False,
                **kwargs):
     super(FCEncoder, self).__init__(name=name, **kwargs)
     self.num_latent = num_latent
     self.hidden_dim = hidden_dim
     self.kernel_initializer = kernel_initializer
-    self.skips = skip_connections
     self.flattened = tf.keras.layers.Flatten()
     self.e1 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.relu, name="e1",
                                     kernel_initializer=self.kernel_initializer)
@@ -70,30 +68,13 @@ class FCEncoder(tf.keras.layers.Layer):
                                        kernel_initializer=self.kernel_initializer)
     self.log_var = tf.keras.layers.Dense(self.num_latent, activation=None,
                                          kernel_initializer=self.kernel_initializer)
-    if self.skips:
-      #For skip connections, just want to add weight matrix times original input to layer
-      #Ignoring weight matrix on layer outputs
-      self.e2_skip = tf.keras.layers.Dense(self.hidden_dim, activation=None,
-                                           name="e2_skip", use_bias=False,
-                                           kernel_initializer=self.kernel_initializer)
-      self.mean_skip = tf.keras.layers.Dense(self.num_latent, activation=None,
-                                             name="mean_skip", use_bias=False,
-                                             kernel_initializer=self.kernel_initializer)
-      self.var_skip = tf.keras.layers.Dense(self.num_latent, activation=None,
-                                            name="var_skip", use_bias=False,
-                                            kernel_initializer=self.kernel_initializer)
 
   def call(self, input_tensor):
     flattened_out = self.flattened(input_tensor)
     e1_out = self.e1(flattened_out)
-    if self.skips:
-      e2_out = tf.nn.relu(self.e2(e1_out) + self.e2_skip(flattened_out))
-      means_out = self.means(e2_out) + self.mean_skip(flattened_out)
-      log_var_out = self.log_var(e2_out) + self.var_skip(flattened_out)
-    else:
-      e2_out = self.e2(e1_out)
-      means_out = self.means(e2_out)
-      log_var_out = self.log_var(e2_out)
+    e2_out = self.e2(e1_out)
+    means_out = self.means(e2_out)
+    log_var_out = self.log_var(e2_out)
     return means_out, log_var_out
 
 
@@ -193,14 +174,12 @@ class FCDecoder(tf.keras.layers.Layer):
                hidden_dim=1200,
                kernel_initializer='glorot_uniform',
                return_vars=False,
-               skip_connections=False,
                **kwargs):
     super(FCDecoder, self).__init__(name=name, **kwargs)
     self.out_shape = out_shape
     self.hidden_dim = hidden_dim
     self.kernel_initializer=kernel_initializer
     self.return_vars = return_vars
-    self.skips = skip_connections
     self.d1 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.tanh,
                                     kernel_initializer=self.kernel_initializer)
     self.d2 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.tanh,
@@ -215,38 +194,15 @@ class FCDecoder(tf.keras.layers.Layer):
       self.log_var = tf.keras.layers.Dense(np.prod(out_shape), activation=None,
                                            kernel_initializer=self.kernel_initializer)
 
-    if self.skips:
-      self.d2_skip = tf.keras.layers.Dense(self.hidden_dim, activation=None,
-                                           use_bias=False,
-                                           kernel_initializer=self.kernel_initializer)
-      self.mean_skip = tf.keras.layers.Dense(np.prod(self.out_shape), activation=None,
-                                             use_bias=False,
-                                             kernel_initializer=self.kernel_initializer)
-      if self.return_vars:
-        self.var_skip = tf.keras.layers.Dense(np.prod(self.out_shape), activation=None,
-                                              use_bias=False,
-                                              kernel_initializer=self.kernel_initializer)
-
   def call(self, latent_tensor):
     d1_out = self.d1(latent_tensor)
-    if self.skips:
-      d2_out = tf.nn.relu(self.d2(d1_out) + self.d2_skip(latent_tensor))
-      means_out = tf.reshape(self.means(d2_out) + self.mean_skip(latent_tensor),
-                             shape=(-1,)+self.out_shape)
-      if self.return_vars:
-        log_var_out = tf.reshape(self.log_var(d2_out) + self.var_skip(latent_tensor),
-                                 shape=(-1,)+self.out_shape)
-        return means_out, log_var_out
-      else:
-        return means_out
+    d2_out = self.d2(d1_out)
+    means_out = tf.reshape(self.means(d2_out), shape=(-1,)+self.out_shape)
+    if self.return_vars:
+      log_var_out = tf.reshape(self.log_var(d2_out), shape=(-1,)+self.out_shape)
+      return means_out, log_var_out
     else:
-      d2_out = self.d2(d1_out)
-      means_out = tf.reshape(self.means(d2_out), shape=(-1,)+self.out_shape)
-      if self.return_vars:
-        log_var_out = tf.reshape(self.log_var(d2_out), shape=(-1,)+self.out_shape)
-        return means_out, log_var_out
-      else:
-        return means_out
+      return means_out
 
 
 class DeconvDecoder(tf.keras.layers.Layer):
@@ -831,7 +787,7 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
                hidden_dim=1200,
                kernel_initializer='glorot_uniform',
                return_vars=False,
-               skip_connections=False,
+               skip_connections=True,
                **kwargs):
     super(AutoregressiveDecoder, self).__init__(name=name, **kwargs)
     self.out_shape = out_shape
@@ -853,31 +809,8 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
     self.base_param = tf.keras.layers.Dense(out_event_dims*np.prod(self.out_shape),
                                             activation=None,
                                             kernel_initializer=self.kernel_initializer)
-#    #Create autoregressive neural network
-#    self.autonet = tfp.bijectors.AutoregressiveNetwork(out_event_dims,
-#                                                  event_shape=np.prod(self.out_shape),
-#                                                  hidden_units=[self.hidden_dim,],
-#                                                  input_order='left-to-right',
-#                                                  hidden_degrees='equal',
-#                                                  activation=tf.nn.tanh,
-#                                                  kernel_initializer=self.kernel_initializer)
     #And will need function to flatten training data if have it
     self.flatten = tf.keras.layers.Flatten()
-
-#     if self.skips:
-#       #Adding skip for everything except autoregressive network
-#       #For that, it's better to just make it conditionally dependent on latent (same thing)
-#       #And that is handled above
-#       self.d2_skip = tf.keras.layers.Dense(self.hidden_dim, activation=None,
-#                                            use_bias=False,
-#                                            kernel_initializer=self.kernel_initializer)
-#       self.mean_skip = tf.keras.layers.Dense(np.prod(self.out_shape), activation=None,
-#                                              use_bias=False,
-#                                              kernel_initializer=self.kernel_initializer)
-#       if self.return_vars:
-#         self.var_skip = tf.keras.layers.Dense(np.prod(self.out_shape), activation=None,
-#                                               use_bias=False,
-#                                               kernel_initializer=self.kernel_initializer)
 
   def build(self, input_shape):
     if self.return_vars:
@@ -984,14 +917,6 @@ generation (no training data provided), but useful to have at other times as wel
   def call(self, latent_tensor, train_data=None):
     #First just convert from latent to full-dimensional space
     d1_out = self.d1(latent_tensor)
-#     if self.skips:
-#       d2_out = tf.nn.relu(self.d2(d1_out) + self.d2_skip(latent_tensor))
-#       param_mean = self.base_param(d2_out)
-#       if self.return_vars:
-#         param_mean, param_logvar = tf.split(param_mean, 2, axis=-1)
-#         param_logvar += self.var_skip(latent_tensor)
-#       param_mean += self.mean_skip(latent_tensor)
-#     else:
     d2_out = self.d2(d1_out)
     param_mean = self.base_param(d2_out)
     if self.return_vars:
