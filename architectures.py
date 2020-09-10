@@ -898,7 +898,7 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
                kernel_initializer='glorot_uniform',
                return_vars=False,
                skip_connections=True,
-               auto_group_size=None,
+               auto_group_size=1,
                **kwargs):
     super(AutoregressiveDecoder, self).__init__(name=name, **kwargs)
     self.out_shape = out_shape
@@ -1039,7 +1039,8 @@ generation (no training data provided), but useful to have at other times as wel
     else:
       sample_out = self.create_dist(tf.pad(mean_out, padding)).sample()
     #Do in a loop over number of dimensions in data, sampling each based on previous
-    for i in range(1, np.prod(self.out_shape)):
+    #Stride it by the autoregressive group size, though
+    for i in range(self.auto_group_size, np.prod(self.out_shape), self.auto_group_size):
       mean_shift = self.autonet(sample_out, conditional_input=skip_input)
       if self.return_vars:
         mean_shift, logvar_shift = tf.split(mean_shift, 2, axis=-1)
