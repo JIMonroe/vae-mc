@@ -775,6 +775,116 @@ number of coefficients.
     return self.beta*coeff_derivs
 
 
+class MaskedNet(tf.keras.layers.Layer):
+  """Dense neural network with connections controlled by a mask, which allows for creation
+of autoregressive networks if the mask is properly designed. This is based on the code for
+tfp.bijectors.AutoregressiveNetwork, but with more of a TF 2 feel, fewer features, but more
+flexibility with the masking operation.
+  """
+  def __init__(self, num_params, event_shape=None,
+               conditional=False, conditional_event_shape=None,
+               hidden_units=[],
+               dof_order=None,
+               activation='tanh',
+               use_bias=True,
+               kernel_initializer='glorot_uniform',
+               bias_initializer='zeros',
+               **kwargs):
+    super(MaskedNet, self).__init__(**kwargs)
+    self.num_params = num_params
+    self.event_shape = event_shape
+    self.conditional = conditional
+    self.conditional_event_shape = conditional_event_shape
+    if self.conditional and self.conditional_event_shape is None:
+      raise ValueError('If want conditional input, must specify conditional_event_shape')
+    self.hidden_units = hidden_units
+    self.activation = tf.keras.layers.Activation(activation) #Will call directly
+    self.use_bias = use_bias
+    self.kernel_initializer = kernel_initializer
+    #Set up default ordering of degrees of freedom for masking if not specified
+    if dof_order is None:
+      #By default, just make the mask standardly autoregressive
+      #This is equivalent to numbering the input degrees of freedom sequentially
+      self.dof_order = np.arange(1, self.event_shape+1)
+    #Otherwise just make sure it's a numpy array (for now... will be list of arrays)
+    else:
+      self.dof_order = np.array(dof_order)
+
+    #To make sure input is 1D (other than batch dimension) will want to flatten
+    self.flatten = tf.keras.layers.Flatten()
+
+    #Will be created in build method
+    self.masks = []
+    self.networks = []
+    self.conditional_networks = []
+
+  @staticmethod
+  def _make_masked_constraint(mask, constraint=None):
+    constraint = tf.keras.constraints.get(constraint)
+    def masked_constraint(w):
+      if constraint is not None:
+        w = constraint(w)
+      return tf.cast(mask, w.dtype) * w
+    return masked_constraint
+
+  @staticmethod
+  def _make_masked_initializer(mask, initializer):
+    initializer = tf.keras.initializers.get(initializer)
+    def masked_initializer(shape, dtype=None):
+      w = initializer(shape, dtype)
+      return tf.cast(mask, w.dtype) * w
+    return masked_initializer
+
+  def build(self, input_shape):
+    if self.event_shape is None:
+      self.event_shape = np.prod(input_shape[1:]) #Product because will flatten
+
+    if np.prod(input_shape[1:]) != self.event_shape:
+      raise ValueError('Specified event_shape and shape of provided input must match!')
+
+    #For each hidden dimension, create a mask and a network
+    layer_outputs = self.hidden_units + [self.event_shape*self.num_params,]
+    self.dof_order = [self.dof_order,]
+    for k in range(len(layer_outputs)):
+      max_degree = np.max(self.dof_order[-1]) - 1
+      if k != len(layer_outputs) - 1:
+        next_dof_order = np.ceil(np.arange(1, layer_outputs[k] + 1) * (self.event_shape - 1)
+                                 / float(layer_outputs[k] + 1)).astype(np.int32)
+        next_dof_order = np.minimum(next_dof_order, max_degree)
+        self.masks.append(self.dof_order[-1][:, np.newaxis] <= next_dof_order)
+      else:
+        next_dof_order = self.dof_order[0]
+        self.masks.append(self.dof_order[-1][:, np.newaxis] < next_dof_order)
+        self.masks[k] = np.reshape(np.tile(self.masks[k][..., np.newaxis],
+                                           [1, 1, self.num_params]),
+                                   [self.masks[k].shape[0], self.event_shape*self.num_params])
+      self.dof_order.append(next_dof_order)
+      self.networks.append(
+                        tf.keras.layers.Dense(layer_outputs[k],
+                        activation=None,
+                        use_bias=self.use_bias,
+                        kernel_initializer=self._make_masked_initializer(self.masks[k],
+                                                                    self.kernel_initializer),
+                        kernel_constraint=self._make_masked_constraint(self.masks[k], None)))
+      if self.conditional:
+        self.conditional_networks.append(tf.keras.layers.Dense(layer_outputs[k],
+                                                 activation=None,
+                                                 use_bias=False,
+                                                 kernel_initializer=self.kernel_initializer))
+    super(MaskedNet, self).build(input_shape)
+
+
+  def call(self, input_tensor, conditional_input=None):
+    out = self.flatten(input_tensor)
+    for k in range(len(self.networks)):
+      out = self.networks[k](out)
+      if self.conditional:
+        out = out + self.conditional_networks[k](conditional_input)
+      if k != len(self.networks) - 1:
+        out = self.activation(out)
+    return tf.reshape(out, (-1, self.event_shape, self.num_params))
+
+
 class AutoregressiveDecoder(tf.keras.layers.Layer):
   """Fully connected encoder with autoregressive network right before prediction.
 
@@ -788,6 +898,7 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
                kernel_initializer='glorot_uniform',
                return_vars=False,
                skip_connections=True,
+               auto_group_size=None,
                **kwargs):
     super(AutoregressiveDecoder, self).__init__(name=name, **kwargs)
     self.out_shape = out_shape
@@ -795,6 +906,13 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
     self.kernel_initializer=kernel_initializer
     self.return_vars = return_vars
     self.skips = skip_connections
+    #Specify how to group DOFs together when autoregressing based on group size
+    self.auto_group_size = auto_group_size
+    #For all separate (default if None when pass to MaskedNet) get [1, 2, 3, 4,...]
+    #If wanted to group two DOFs at a time, would want [1, 1, 2, 2, 3, 3,...]
+    self.auto_groupings = np.repeat(
+                          np.arange(1, np.ceil(np.prod(out_shape)/self.auto_group_size) + 1),
+                          self.auto_group_size)[:int(np.prod(out_shape))].astype(np.int32)
     self.d1 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.tanh,
                                     kernel_initializer=self.kernel_initializer)
     self.d2 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.tanh,
@@ -821,24 +939,40 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
     #So create in build method
     #With/without conditional input as latent space tensor if self.skips is true/false
     if self.skips:
-      self.autonet = tfp.bijectors.AutoregressiveNetwork(out_event_dims,
-                                                  event_shape=np.prod(self.out_shape),
-                                                  conditional=True,
-                                                  conditional_event_shape=input_shape[1:],
-                                                  conditional_input_layers='all_layers',
-                                                  hidden_units=[self.hidden_dim,],
-                                                  input_order='left-to-right',
-                                                  hidden_degrees='equal',
-                                                  activation=tf.nn.tanh,
-                                                  kernel_initializer=self.kernel_initializer)
+#      self.autonet = tfp.bijectors.AutoregressiveNetwork(out_event_dims,
+#                                                  event_shape=np.prod(self.out_shape),
+#                                                  conditional=True,
+#                                                  conditional_event_shape=input_shape[1:],
+#                                                  conditional_input_layers='all_layers',
+#                                                  hidden_units=[self.hidden_dim,],
+#                                                  input_order='left-to-right',
+#                                                  hidden_degrees='equal',
+#                                                  activation=tf.nn.tanh,
+#                                                  kernel_initializer=self.kernel_initializer)
+      self.autonet = MaskedNet(out_event_dims,
+                               event_shape=np.prod(self.out_shape),
+                               conditional=True,
+                               conditional_event_shape=input_shape[1:],
+                               hidden_units=[self.hidden_dim,],
+                               dof_order=self.auto_groupings,
+                               activation='tanh',
+                               use_bias=True,
+                               kernel_initializer=self.kernel_initializer)
     else:
-      self.autonet = tfp.bijectors.AutoregressiveNetwork(out_event_dims,
-                                                  event_shape=np.prod(self.out_shape),
-                                                  hidden_units=[self.hidden_dim,],
-                                                  input_order='left-to-right',
-                                                  hidden_degrees='equal',
-                                                  activation=tf.nn.tanh,
-                                                  kernel_initializer=self.kernel_initializer)
+#      self.autonet = tfp.bijectors.AutoregressiveNetwork(out_event_dims,
+#                                                  event_shape=np.prod(self.out_shape),
+#                                                  hidden_units=[self.hidden_dim,],
+#                                                  input_order='left-to-right',
+#                                                  hidden_degrees='equal',
+#                                                  activation=tf.nn.tanh,
+#                                                  kernel_initializer=self.kernel_initializer)
+      self.autonet = MaskedNet(out_event_dims,
+                               event_shape=np.prod(self.out_shape),
+                               hidden_units=[self.hidden_dim,],
+                               dof_order=self.auto_groupings,
+                               activation='tanh',
+                               use_bias=True,
+                               kernel_initializer=self.kernel_initializer)
 
 #  def get_truncation(self, means, coords,
 #                     hs_diam=1.1611*0.82, #Actual hard-sphere diameter multiplied by 0.82
