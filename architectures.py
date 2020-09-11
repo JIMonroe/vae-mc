@@ -974,31 +974,55 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
                                use_bias=True,
                                kernel_initializer=self.kernel_initializer)
 
-#  def get_truncation(self, means, coords,
-#                     hs_diam=1.1611*0.82, #Actual hard-sphere diameter multiplied by 0.82
-#                                          #Prevents overlaps causing energy over 5.65 kB*T
-#                     box_dims=np.array([[-3.0, 3.0], [-3.0, 3.0]]),
-#                     num_skip=2):
-#    """Given the means of Gaussian distributions for each coordinate and coordinate values,
-#uses an autoregressive-type model to truncate the distribution. For each mean, coordinates
-#of lower index are used to determine the low and high cutoffs for truncating its
-#distribution. These cutoffs associated with each mean are returned. If no other particles are
-#closer than the box edge locations specified by "box_dims" then those are used for
-#truncation. Note that truncation will only be performed based on the same cartesian dimension
-#of previously generated particles with similar cartesian coordinates in the other dimensions.
-#This number of cartesian coordinates is determined by the first dimension of box_dims.
-#    """
-#    #Set up upper and lower cutoffs, just using box-based cutoffs as defaults
-#    low_cuts = np.zeros(means.shape)
-#    high_cuts = np.zeros(means.shape)
-#    for i in range(box_dims.shape[0]):
-#      #Subtract or add hard-sphere radius to box lower or upper box locations
-#      low_cuts[:, i::box_dims.shape[0]] = box_dims[i, 0] - hs_diam*0.5
-#      high_cuts[:, i::box_dims.shape[0]] = box_dims[i, 1] + hs_diam*0.5
-#    #Loop over means, ignoring all dimensions for first num_skip particles
-#    for i in range(num_skip*box_dims.shape[0], means.shape, box_dims.shape[0]):
-#      #Loop over dimensions to find particle positions to use for truncation
-#      for j in range(box_dims.shape[0]):
+  def get_truncation(self, means, coords,
+                     hs_diam=1.1611*0.82, #Actual hard-sphere diameter multiplied by 0.82
+                                          #Prevents overlaps causing energy over 5.65 kB*T
+                     box_dims=np.array([[-3.0, 3.0], [-3.0, 3.0]]),
+                     num_skip=2, #Specific to dimer particles
+                     ):
+    """Given the means of Gaussian distributions for each coordinate and coordinate values,
+uses an autoregressive-type model to truncate the distribution. For each mean, coordinates
+of lower index are used to determine the low and high cutoffs for truncating its
+distribution. These cutoffs associated with each mean are returned. If no other particles are
+closer than the box edge locations specified by "box_dims" then the box edges are used for
+truncation. Note that truncation will only be performed based on the same cartesian dimension
+of previously generated particles with similar cartesian coordinates in the other dimensions.
+    """
+    if box_dims.shape[0] != self.auto_group_size:
+      raise ValueError('Number of box dimensions for Gaussian truncation must match number of autoregressive groups! (Otherwise model will not be autoregressive)')
+    #Set up upper and lower cutoffs, just using box-based cutoffs as defaults
+    low_cuts = np.zeros(means.shape)
+    high_cuts = np.zeros(means.shape)
+    for i in range(self.auto_group_size):
+      #Subtract or add hard-sphere radius to box lower or upper box locations
+      low_cuts[:, i::self.auto_group_size] = box_dims[i, 0] - hs_diam*0.5
+      high_cuts[:, i::self.auto_group_size] = box_dims[i, 1] + hs_diam*0.5
+    #Loop over means, ignoring first num_skip particles
+    for i in range(num_skip*self.auto_group_size, means.shape[-1], self.auto_group_size):
+      #Loop over dimensions to truncate in each one
+      for j in range(self.auto_group_size):
+        #Create boolean for eligible particles
+        this_eligible = np.zeros(means.shape, dtype=bool)
+        this_eligible[:, j:i:self.auto_group_size] = True
+        #Loop over dimensions other than this one to find particles this one would hit
+        #(if moved only along the j dimension)
+        for k in range(self.auto_group_size):
+          if k == j:
+            continue
+          this_compare = tf.math.logical_and((coords[:, k:i:self.auto_group_size]
+                                              >= means[:, i+k:i+k+1]-hs_diam*0.5),
+                                             (coords[:, k:i:self.auto_group_size]
+                                              <= means[:, i+k:i+k+1]+hs_diam*0.5))
+          this_eligible[:, j:i:self.auto_group_size] *= this_compare.numpy()
+        low_eligible = this_eligible*(coords <= means[:, i+j:i+j+1]).numpy()
+        low_cuts[:, i+j] = tf.reduce_max(tf.ragged.boolean_mask(coords, low_eligible),
+                                         axis=-1)
+        low_cuts[:, i+j] = tf.maximum(low_cuts[:, i+j], box_dims[j, 0] - hs_diam*0.5)
+        high_eligible = this_eligible*(coords > means[:, i+j:i+j+1]).numpy()
+        high_cuts[:, i+j] = tf.reduce_min(tf.ragged.boolean_mask(coords, high_eligible),
+                                          axis=-1)
+        high_cuts[:, i+j] = tf.minimum(high_cuts[:, i+j], box_dims[j, 1] + hs_diam*0.5)
+    return low_cuts, high_cuts
 
   def create_dist(self, params):
     """Need a function to create a sampling distribution for the autoregressive distribution.
@@ -1029,11 +1053,11 @@ generation (no training data provided), but useful to have at other times as wel
       print("Skip connections are not in use, but skip_input is not None.")
       print("This will result in the input being ignored, so check this.")
     #To keep track of sample, pad first degree of freedom to pass through autonet
-    mean_out = param_mean[:, :1]
-    padding = [[0, 0], [0, np.prod(self.out_shape)-1]]
+    mean_out = param_mean[:, :self.auto_group_size]
+    padding = [[0, 0], [0, np.prod(self.out_shape)-self.auto_group_size]]
     #Below will fail if return_vars is True but param_logvar is not specified!
     if self.return_vars:
-      logvar_out = param_logvar[:, :1]
+      logvar_out = param_logvar[:, :self.auto_group_size]
       sample_out = self.create_dist([tf.pad(mean_out, padding),
                                      tf.pad(logvar_out, padding)]).sample()
     else:
@@ -1047,13 +1071,17 @@ generation (no training data provided), but useful to have at other times as wel
         logvar_shift = tf.squeeze(logvar_shift, axis=-1)
         this_logvar = param_logvar + logvar_shift
         logvar_out = tf.concat((logvar_out,
-                                tf.gather(this_logvar, [i], axis=-1)),
+                                tf.gather(this_logvar,
+                                          np.arange(i, i+self.auto_group_size),
+                                          axis=-1)),
                                 axis=-1)
       #Add on to existing parameter information
       mean_shift = tf.squeeze(mean_shift, axis=-1)
       this_mean = param_mean + mean_shift
       mean_out = tf.concat((mean_out,
-                            tf.gather(this_mean, [i], axis=-1)),
+                            tf.gather(this_mean,
+                                      np.arange(i, i+self.auto_group_size),
+                                      axis=-1)),
                             axis=-1)
       #Sample from distribution because need values to predict next degree of freedom
       if self.return_vars:
