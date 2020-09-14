@@ -310,6 +310,7 @@ their paper 'Variational Lossy Autoencoder.'
                beta=1.0, flow_type='rqs',
                use_skips=True,
                n_auto_group=1,
+               truncate_norm=False,
                **kwargs):
     super(PriorFlowVAE, self).__init__(name=name, **kwargs)
     self.data_shape = data_shape
@@ -322,6 +323,7 @@ their paper 'Variational Lossy Autoencoder.'
     self.arch = arch
     self.use_skips = use_skips
     self.n_auto_group = n_auto_group
+    self.truncate_norm = truncate_norm
     if self.arch == 'conv':
       self.encoder = architectures.ConvEncoder(num_latent)
       if self.autoregress:
@@ -336,7 +338,8 @@ their paper 'Variational Lossy Autoencoder.'
         self.decoder = architectures.AutoregressiveDecoder(data_shape,
                                                            return_vars=self.include_vars,
                                                            skip_connections=self.use_skips,
-                                                           auto_group_size=self.n_auto_group)
+                                                           auto_group_size=self.n_auto_group,
+                                                           truncate_normal=self.truncate_norm)
       else:
         self.decoder = architectures.FCDecoder(data_shape, return_vars=self.include_vars)
     self.sampler = architectures.SampleLatent()
