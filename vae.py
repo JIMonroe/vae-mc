@@ -309,6 +309,7 @@ their paper 'Variational Lossy Autoencoder.'
                autoregress=False, include_vars=False,
                beta=1.0, flow_type='rqs',
                use_skips=True,
+               n_auto_group=1,
                **kwargs):
     super(PriorFlowVAE, self).__init__(name=name, **kwargs)
     self.data_shape = data_shape
@@ -320,6 +321,7 @@ their paper 'Variational Lossy Autoencoder.'
     #Can switch to convolutional if specify arch='conv' (won't have flow, though)
     self.arch = arch
     self.use_skips = use_skips
+    self.n_auto_group = n_auto_group
     if self.arch == 'conv':
       self.encoder = architectures.ConvEncoder(num_latent)
       if self.autoregress:
@@ -332,7 +334,9 @@ their paper 'Variational Lossy Autoencoder.'
       self.encoder = architectures.FCEncoder(num_latent, hidden_dim=1200)
       if self.autoregress:
         self.decoder = architectures.AutoregressiveDecoder(data_shape,
-                                                           return_vars=self.include_vars, skip_connections=self.use_skips)
+                                                           return_vars=self.include_vars,
+                                                           skip_connections=self.use_skips,
+                                                           auto_group_size=self.n_auto_group)
       else:
         self.decoder = architectures.FCDecoder(data_shape, return_vars=self.include_vars)
     self.sampler = architectures.SampleLatent()
@@ -446,7 +450,7 @@ between the two, 'system_type' should either be 'dimer' or 'lg'.
     if self.system == 'dimer':
       self.encoder = architectures.DimerCGMapping()
       if self.autoregress:
-        self.decoder = architectures.AutoregressiveDecoder(self.data_shape, return_vars=True, skip_connections=self.use_skips)
+        self.decoder = architectures.AutoregressiveDecoder(self.data_shape, return_vars=True, skip_connections=self.use_skips, auto_group_size=2)
       else:
         self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
     elif self.system == 'lg':
@@ -521,7 +525,7 @@ lattice gas system as 'dimer' or 'lg' input to the 'system_type' argument.
       self.encoder = architectures.DimerCGMapping()
       self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.8, 2.2, 40))
       if self.autoregress:
-        self.decoder = architectures.AutoregressiveDecoder(self.data_shape, return_vars=True, skip_connections=self.use_skips)
+        self.decoder = architectures.AutoregressiveDecoder(self.data_shape, return_vars=True, skip_connections=self.use_skips, auto_group_size=2)
       else:
         self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
     elif self.system == 'lg':
