@@ -899,6 +899,7 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
                return_vars=False,
                skip_connections=True,
                auto_group_size=1,
+               truncate_normal=False,
                **kwargs):
     super(AutoregressiveDecoder, self).__init__(name=name, **kwargs)
     self.out_shape = out_shape
@@ -906,6 +907,7 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
     self.kernel_initializer=kernel_initializer
     self.return_vars = return_vars
     self.skips = skip_connections
+    self.truncate_normal = truncate_normal
     #Specify how to group DOFs together when autoregressing based on group size
     self.auto_group_size = auto_group_size
     #For all separate (default if None when pass to MaskedNet) get [1, 2, 3, 4,...]
@@ -991,8 +993,8 @@ of previously generated particles with similar cartesian coordinates in the othe
     if box_dims.shape[0] != self.auto_group_size:
       raise ValueError('Number of box dimensions for Gaussian truncation must match number of autoregressive groups! (Otherwise model will not be autoregressive)')
     #Set up upper and lower cutoffs, just using box-based cutoffs as defaults
-    low_cuts = np.zeros(means.shape)
-    high_cuts = np.zeros(means.shape)
+    low_cuts = np.zeros(means.shape, dtype=np.float32)
+    high_cuts = np.zeros(means.shape, dtype=np.float32)
     for i in range(self.auto_group_size):
       #Subtract or add hard-sphere radius to box lower or upper box locations
       low_cuts[:, i::self.auto_group_size] = box_dims[i, 0] - hs_diam*0.5
@@ -1006,22 +1008,31 @@ of previously generated particles with similar cartesian coordinates in the othe
         this_eligible[:, j:i:self.auto_group_size] = True
         #Loop over dimensions other than this one to find particles this one would hit
         #(if moved only along the j dimension)
+        #Conservatively using half the hard-sphere diameter to define if will hit
         for k in range(self.auto_group_size):
           if k == j:
             continue
           this_compare = tf.math.logical_and((coords[:, k:i:self.auto_group_size]
-                                              >= means[:, i+k:i+k+1]-hs_diam*0.5),
+                                              >= means[:, i+k:i+k+1]-0.5*hs_diam),
                                              (coords[:, k:i:self.auto_group_size]
-                                              <= means[:, i+k:i+k+1]+hs_diam*0.5))
+                                              <= means[:, i+k:i+k+1]+0.5*hs_diam))
           this_eligible[:, j:i:self.auto_group_size] *= this_compare.numpy()
         low_eligible = this_eligible*(coords <= means[:, i+j:i+j+1]).numpy()
-        low_cuts[:, i+j] = tf.reduce_max(tf.ragged.boolean_mask(coords, low_eligible),
-                                         axis=-1)
+        #For lower pick largest sampled coordinate below mean (above guarantees this)
+        low_cuts[:, i+j] = tf.reduce_max(tf.ragged.boolean_mask(coords+hs_diam,
+                                                                low_eligible), axis=-1)
+        #If box is closer, pick that instead
         low_cuts[:, i+j] = tf.maximum(low_cuts[:, i+j], box_dims[j, 0] - hs_diam*0.5)
+        #Same for higher cutoff, but pick smallest sampled coordinate above mean
         high_eligible = this_eligible*(coords > means[:, i+j:i+j+1]).numpy()
-        high_cuts[:, i+j] = tf.reduce_min(tf.ragged.boolean_mask(coords, high_eligible),
-                                          axis=-1)
+        high_cuts[:, i+j] = tf.reduce_min(tf.ragged.boolean_mask(coords-hs_diam,
+                                                                 high_eligible), axis=-1)
         high_cuts[:, i+j] = tf.minimum(high_cuts[:, i+j], box_dims[j, 1] + hs_diam*0.5)
+        #Finally need to make sure that low_cuts < high_cuts
+        #If this happens, just use the box cutoffs and truncation will not help the model
+        flipped_cuts = high_cuts[:, i+j] <= low_cuts[:, i+j]
+        low_cuts[flipped_cuts, i+j] = box_dims[j, 0] - hs_diam*0.5
+        high_cuts[flipped_cuts, i+j] = box_dims[j, 1] + hs_diam*0.5
     return low_cuts, high_cuts
 
   def create_dist(self, params):
@@ -1034,7 +1045,13 @@ If return_vars is true, params should be a list of [means, logvars].
     if self.return_vars:
       means = params[0]
       logvars = params[1]
-      base_dist = tfp.distributions.Normal(means, tf.exp(0.5*logvars))
+      try:
+        lowcuts = params[2]
+        highcuts = params[3]
+        base_dist = tfp.distributions.TruncatedNormal(means, tf.exp(0.5*logvars),
+                                                      lowcuts, highcuts)
+      except IndexError:
+        base_dist = tfp.distributions.Normal(means, tf.exp(0.5*logvars))
     else:
       base_dist = tfp.distributions.Bernoulli(logits=params, dtype='float32')
     this_dist = tfp.distributions.Independent(base_dist, reinterpreted_batch_ndims=1)
@@ -1085,14 +1102,17 @@ generation (no training data provided), but useful to have at other times as wel
                             axis=-1)
       #Sample from distribution because need values to predict next degree of freedom
       if self.return_vars:
-        this_sample = self.create_dist([this_mean, this_logvar]).sample()
+        #If want truncation, get it before sampling
+        if self.truncate_normal:
+          this_lowcut, this_highcut = self.get_truncation(this_mean, sample_out)
+          this_sample = self.create_dist([this_mean, this_logvar,
+                                          this_lowcut, this_highcut]).sample()
+        else:
+          this_sample = self.create_dist([this_mean, this_logvar]).sample()
       else:
         this_sample = self.create_dist(this_mean).sample()
       sample_out = tf.concat((sample_out[:, :i], this_sample[:, i:]), axis=-1)
-    mean_out = tf.reshape(mean_out, shape=(-1,)+self.out_shape)
-    sample_out = tf.reshape(sample_out, shape=(-1,)+self.out_shape)
     if self.return_vars:
-      logvar_out = tf.reshape(logvar_out, shape=(-1,)+self.out_shape)
       if sample_only:
         return sample_out
       else:
@@ -1118,9 +1138,19 @@ generation (no training data provided), but useful to have at other times as wel
       mean_shift = self.autonet(self.flatten(train_data), conditional_input=latent_tensor)
       if self.return_vars:
         mean_shift, logvar_shift = tf.squeeze(tf.split(mean_shift, 2, axis=-1), axis=-1)
-        mean_out = tf.reshape(param_mean + mean_shift, shape=(-1,)+self.out_shape)
-        logvar_out = tf.reshape(param_logvar + logvar_shift, shape=(-1,)+self.out_shape)
-        return mean_out, logvar_out
+        mean_out = param_mean + mean_shift
+        logvar_out = param_logvar + logvar_shift
+        if self.truncate_normal:
+          low_out, high_out = self.get_truncation(mean_out, self.flatten(train_data))
+          mean_out = tf.reshape(mean_out, shape=(-1,)+self.out_shape)
+          logvar_out = tf.reshape(logvar_out, shape=(-1,)+self.out_shape)
+          low_out = tf.reshape(low_out, shape=(-1,)+self.out_shape)
+          high_out = tf.reshape(high_out, shape=(-1,)+self.out_shape)
+          return mean_out, logvar_out, low_out, high_out
+        else:
+          mean_out = tf.reshape(mean_out, shape=(-1,)+self.out_shape)
+          logvar_out = tf.reshape(logvar_out, shape=(-1,)+self.out_shape)
+          return mean_out, logvar_out
       else:
         mean_out = tf.reshape(param_mean + tf.squeeze(mean_shift, axis=-1),
                               shape=(-1,)+self.out_shape)
@@ -1134,11 +1164,27 @@ generation (no training data provided), but useful to have at other times as wel
       else:
         skip_input = None
       if self.return_vars:
-        return self.create_sample(param_mean, param_logvar,
-                                  sample_only=False, skip_input=skip_input)
+        mean_out, logvar_out, sample_out = self.create_sample(param_mean, param_logvar,
+                                                    sample_only=False, skip_input=skip_input)
+        if self.truncate_normal:
+          low_out, high_out = self.get_truncation(mean_out, self.flatten(sample_out))
+          mean_out = tf.reshape(mean_out, shape=(-1,)+self.out_shape)
+          logvar_out = tf.reshape(logvar_out, shape=(-1,)+self.out_shape)
+          low_out = tf.reshape(low_out, shape=(-1,)+self.out_shape)
+          high_out = tf.reshape(high_out, shape=(-1,)+self.out_shape)
+          sample_out = tf.reshape(sample_out, shape=(-1,)+self.out_shape)
+          return mean_out, logvar_out, low_out, high_out, sample_out
+        else:
+          mean_out = tf.reshape(mean_out, shape=(-1,)+self.out_shape)
+          logvar_out = tf.reshape(logvar_out, shape=(-1,)+self.out_shape)
+          sample_out = tf.reshape(sample_out, shape=(-1,)+self.out_shape)
+          return mean_out, logvar_out, sample_out
       else:
-        return self.create_sample(param_mean,
-                                  sample_only=False, skip_input=skip_input)
+        mean_out, sample_out = self.create_sample(param_mean,
+                                                  sample_only=False, skip_input=skip_input)
+        mean_out = tf.reshape(mean_out, shape=(-1,)+self.out_shape)
+        sample_out = tf.reshape(sample_out, shape=(-1,)+self.out_shape)
+        return mean_out, sample_out
 
 
 class AutoConvDecoder(tf.keras.layers.Layer):
