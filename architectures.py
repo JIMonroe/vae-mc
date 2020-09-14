@@ -1069,8 +1069,15 @@ generation (no training data provided), but useful to have at other times as wel
     if not self.skips and skip_input is not None:
       print("Skip connections are not in use, but skip_input is not None.")
       print("This will result in the input being ignored, so check this.")
-    #To keep track of sample, pad first degree of freedom to pass through autonet
-    mean_out = param_mean[:, :self.auto_group_size]
+    #If the autonet has conditional inputs, the first DOF group may also be modified
+    #So first pass through autonet before breaking out first set of parameters
+    #Technically, input won't actually matter, just conditional_input for this first pass
+    mean_out = self.autonet(param_mean, conditional_input=skip_input)
+    if self.return_vars:
+      mean_out, logvar_out = tf.split(mean_out, 2, axis=-1)
+      logvar_out = (param_logvar + tf.squeeze(logvar_out, axis=-1))[:, :self.auto_group_size]
+    mean_out = (param_mean + tf.squeeze(mean_out, axis=-1))[:, :self.auto_group_size]
+    #Will need to pad to generate starting sample
     padding = [[0, 0], [0, np.prod(self.out_shape)-self.auto_group_size]]
     #Below will fail if return_vars is True but param_logvar is not specified!
     if self.return_vars:
