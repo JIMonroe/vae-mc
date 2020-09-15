@@ -999,40 +999,40 @@ of previously generated particles with similar cartesian coordinates in the othe
       #Subtract or add hard-sphere radius to box lower or upper box locations
       low_cuts[:, i::self.auto_group_size] = box_dims[i, 0] - hs_diam*0.5
       high_cuts[:, i::self.auto_group_size] = box_dims[i, 1] + hs_diam*0.5
-    #Loop over means, ignoring first num_skip particles
-    for i in range(num_skip*self.auto_group_size, means.shape[-1], self.auto_group_size):
-      #Loop over dimensions to truncate in each one
-      for j in range(self.auto_group_size):
-        #Create boolean for eligible particles
-        this_eligible = np.zeros(means.shape, dtype=bool)
-        this_eligible[:, j:i:self.auto_group_size] = True
-        #Loop over dimensions other than this one to find particles this one would hit
-        #(if moved only along the j dimension)
-        #Conservatively using half the hard-sphere diameter to define if will hit
-        for k in range(self.auto_group_size):
-          if k == j:
-            continue
-          this_compare = tf.math.logical_and((coords[:, k:i:self.auto_group_size]
-                                              >= means[:, i+k:i+k+1]-0.5*hs_diam),
-                                             (coords[:, k:i:self.auto_group_size]
-                                              <= means[:, i+k:i+k+1]+0.5*hs_diam))
-          this_eligible[:, j:i:self.auto_group_size] *= this_compare.numpy()
-        low_eligible = this_eligible*(coords <= means[:, i+j:i+j+1]).numpy()
-        #For lower pick largest sampled coordinate below mean (above guarantees this)
-        low_cuts[:, i+j] = tf.reduce_max(tf.ragged.boolean_mask(coords+hs_diam,
-                                                                low_eligible), axis=-1)
-        #If box is closer, pick that instead
-        low_cuts[:, i+j] = tf.maximum(low_cuts[:, i+j], box_dims[j, 0] - hs_diam*0.5)
-        #Same for higher cutoff, but pick smallest sampled coordinate above mean
-        high_eligible = this_eligible*(coords > means[:, i+j:i+j+1]).numpy()
-        high_cuts[:, i+j] = tf.reduce_min(tf.ragged.boolean_mask(coords-hs_diam,
-                                                                 high_eligible), axis=-1)
-        high_cuts[:, i+j] = tf.minimum(high_cuts[:, i+j], box_dims[j, 1] + hs_diam*0.5)
-        #Finally need to make sure that low_cuts < high_cuts
-        #If this happens, just use the box cutoffs and truncation will not help the model
-        flipped_cuts = high_cuts[:, i+j] <= low_cuts[:, i+j]
-        low_cuts[flipped_cuts, i+j] = box_dims[j, 0] - hs_diam*0.5
-        high_cuts[flipped_cuts, i+j] = box_dims[j, 1] + hs_diam*0.5
+#    #Loop over means, ignoring first num_skip particles
+#    for i in range(num_skip*self.auto_group_size, means.shape[-1], self.auto_group_size):
+#      #Loop over dimensions to truncate in each one
+#      for j in range(self.auto_group_size):
+#        #Create boolean for eligible particles
+#        this_eligible = np.zeros(means.shape, dtype=bool)
+#        this_eligible[:, j:i:self.auto_group_size] = True
+#        #Loop over dimensions other than this one to find particles this one would hit
+#        #(if moved only along the j dimension)
+#        #Conservatively using half the hard-sphere diameter to define if will hit
+#        for k in range(self.auto_group_size):
+#          if k == j:
+#            continue
+#          this_compare = tf.math.logical_and((coords[:, k:i:self.auto_group_size]
+#                                              >= means[:, i+k:i+k+1]-0.5*hs_diam),
+#                                             (coords[:, k:i:self.auto_group_size]
+#                                              <= means[:, i+k:i+k+1]+0.5*hs_diam))
+#          this_eligible[:, j:i:self.auto_group_size] *= this_compare.numpy()
+#        low_eligible = this_eligible*(coords <= means[:, i+j:i+j+1]).numpy()
+#        #For lower pick largest sampled coordinate below mean (above guarantees this)
+#        low_cuts[:, i+j] = tf.reduce_max(tf.ragged.boolean_mask(coords+hs_diam,
+#                                                                low_eligible), axis=-1)
+#        #If box is closer, pick that instead
+#        low_cuts[:, i+j] = tf.maximum(low_cuts[:, i+j], box_dims[j, 0] - hs_diam*0.5)
+#        #Same for higher cutoff, but pick smallest sampled coordinate above mean
+#        high_eligible = this_eligible*(coords > means[:, i+j:i+j+1]).numpy()
+#        high_cuts[:, i+j] = tf.reduce_min(tf.ragged.boolean_mask(coords-hs_diam,
+#                                                                 high_eligible), axis=-1)
+#        high_cuts[:, i+j] = tf.minimum(high_cuts[:, i+j], box_dims[j, 1] + hs_diam*0.5)
+#        #Finally need to make sure that low_cuts < high_cuts
+#        #If this happens, just use the box cutoffs and truncation will not help the model
+#        flipped_cuts = high_cuts[:, i+j] <= low_cuts[:, i+j]
+#        low_cuts[flipped_cuts, i+j] = box_dims[j, 0] - hs_diam*0.5
+#        high_cuts[flipped_cuts, i+j] = box_dims[j, 1] + hs_diam*0.5
     return low_cuts, high_cuts
 
   def create_dist(self, params):
