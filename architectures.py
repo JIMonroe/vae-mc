@@ -775,6 +775,116 @@ number of coefficients.
     return self.beta*coeff_derivs
 
 
+class MaskedNet(tf.keras.layers.Layer):
+  """Dense neural network with connections controlled by a mask, which allows for creation
+of autoregressive networks if the mask is properly designed. This is based on the code for
+tfp.bijectors.AutoregressiveNetwork, but with more of a TF 2 feel, fewer features, but more
+flexibility with the masking operation.
+  """
+  def __init__(self, num_params, event_shape=None,
+               conditional=False, conditional_event_shape=None,
+               hidden_units=[],
+               dof_order=None,
+               activation='tanh',
+               use_bias=True,
+               kernel_initializer='glorot_uniform',
+               bias_initializer='zeros',
+               **kwargs):
+    super(MaskedNet, self).__init__(**kwargs)
+    self.num_params = num_params
+    self.event_shape = event_shape
+    self.conditional = conditional
+    self.conditional_event_shape = conditional_event_shape
+    if self.conditional and self.conditional_event_shape is None:
+      raise ValueError('If want conditional input, must specify conditional_event_shape')
+    self.hidden_units = hidden_units
+    self.activation = tf.keras.layers.Activation(activation) #Will call directly
+    self.use_bias = use_bias
+    self.kernel_initializer = kernel_initializer
+    #Set up default ordering of degrees of freedom for masking if not specified
+    if dof_order is None:
+      #By default, just make the mask standardly autoregressive
+      #This is equivalent to numbering the input degrees of freedom sequentially
+      self.dof_order = np.arange(1, self.event_shape+1)
+    #Otherwise just make sure it's a numpy array (for now... will be list of arrays)
+    else:
+      self.dof_order = np.array(dof_order)
+
+    #To make sure input is 1D (other than batch dimension) will want to flatten
+    self.flatten = tf.keras.layers.Flatten()
+
+    #Will be created in build method
+    self.masks = []
+    self.networks = []
+    self.conditional_networks = []
+
+  @staticmethod
+  def _make_masked_constraint(mask, constraint=None):
+    constraint = tf.keras.constraints.get(constraint)
+    def masked_constraint(w):
+      if constraint is not None:
+        w = constraint(w)
+      return tf.cast(mask, w.dtype) * w
+    return masked_constraint
+
+  @staticmethod
+  def _make_masked_initializer(mask, initializer):
+    initializer = tf.keras.initializers.get(initializer)
+    def masked_initializer(shape, dtype=None):
+      w = initializer(shape, dtype)
+      return tf.cast(mask, w.dtype) * w
+    return masked_initializer
+
+  def build(self, input_shape):
+    if self.event_shape is None:
+      self.event_shape = np.prod(input_shape[1:]) #Product because will flatten
+
+    if np.prod(input_shape[1:]) != self.event_shape:
+      raise ValueError('Specified event_shape and shape of provided input must match!')
+
+    #For each hidden dimension, create a mask and a network
+    layer_outputs = self.hidden_units + [self.event_shape*self.num_params,]
+    self.dof_order = [self.dof_order,]
+    for k in range(len(layer_outputs)):
+      max_degree = np.max(self.dof_order[-1]) - 1
+      if k != len(layer_outputs) - 1:
+        next_dof_order = np.ceil(np.arange(1, layer_outputs[k] + 1) * (self.event_shape - 1)
+                                 / float(layer_outputs[k] + 1)).astype(np.int32)
+        next_dof_order = np.minimum(next_dof_order, max_degree)
+        self.masks.append(self.dof_order[-1][:, np.newaxis] <= next_dof_order)
+      else:
+        next_dof_order = self.dof_order[0]
+        self.masks.append(self.dof_order[-1][:, np.newaxis] < next_dof_order)
+        self.masks[k] = np.reshape(np.tile(self.masks[k][..., np.newaxis],
+                                           [1, 1, self.num_params]),
+                                   [self.masks[k].shape[0], self.event_shape*self.num_params])
+      self.dof_order.append(next_dof_order)
+      self.networks.append(
+                        tf.keras.layers.Dense(layer_outputs[k],
+                        activation=None,
+                        use_bias=self.use_bias,
+                        kernel_initializer=self._make_masked_initializer(self.masks[k],
+                                                                    self.kernel_initializer),
+                        kernel_constraint=self._make_masked_constraint(self.masks[k], None)))
+      if self.conditional:
+        self.conditional_networks.append(tf.keras.layers.Dense(layer_outputs[k],
+                                                 activation=None,
+                                                 use_bias=False,
+                                                 kernel_initializer=self.kernel_initializer))
+    super(MaskedNet, self).build(input_shape)
+
+
+  def call(self, input_tensor, conditional_input=None):
+    out = self.flatten(input_tensor)
+    for k in range(len(self.networks)):
+      out = self.networks[k](out)
+      if self.conditional:
+        out = out + self.conditional_networks[k](conditional_input)
+      if k != len(self.networks) - 1:
+        out = self.activation(out)
+    return tf.reshape(out, (-1, self.event_shape, self.num_params))
+
+
 class AutoregressiveDecoder(tf.keras.layers.Layer):
   """Fully connected encoder with autoregressive network right before prediction.
 
@@ -788,6 +898,8 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
                kernel_initializer='glorot_uniform',
                return_vars=False,
                skip_connections=True,
+               auto_group_size=1,
+               truncate_normal=False,
                **kwargs):
     super(AutoregressiveDecoder, self).__init__(name=name, **kwargs)
     self.out_shape = out_shape
@@ -795,6 +907,14 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
     self.kernel_initializer=kernel_initializer
     self.return_vars = return_vars
     self.skips = skip_connections
+    self.truncate_normal = truncate_normal
+    #Specify how to group DOFs together when autoregressing based on group size
+    self.auto_group_size = auto_group_size
+    #For all separate (default if None when pass to MaskedNet) get [1, 2, 3, 4,...]
+    #If wanted to group two DOFs at a time, would want [1, 1, 2, 2, 3, 3,...]
+    self.auto_groupings = np.repeat(
+                          np.arange(1, np.ceil(np.prod(out_shape)/self.auto_group_size) + 1),
+                          self.auto_group_size)[:int(np.prod(out_shape))].astype(np.int32)
     self.d1 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.tanh,
                                     kernel_initializer=self.kernel_initializer)
     self.d2 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.tanh,
@@ -821,24 +941,99 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
     #So create in build method
     #With/without conditional input as latent space tensor if self.skips is true/false
     if self.skips:
-      self.autonet = tfp.bijectors.AutoregressiveNetwork(out_event_dims,
-                                                  event_shape=np.prod(self.out_shape),
-                                                  conditional=True,
-                                                  conditional_event_shape=input_shape[1:],
-                                                  conditional_input_layers='all_layers',
-                                                  hidden_units=[self.hidden_dim,],
-                                                  input_order='left-to-right',
-                                                  hidden_degrees='equal',
-                                                  activation=tf.nn.tanh,
-                                                  kernel_initializer=self.kernel_initializer)
+#      self.autonet = tfp.bijectors.AutoregressiveNetwork(out_event_dims,
+#                                                  event_shape=np.prod(self.out_shape),
+#                                                  conditional=True,
+#                                                  conditional_event_shape=input_shape[1:],
+#                                                  conditional_input_layers='all_layers',
+#                                                  hidden_units=[self.hidden_dim,],
+#                                                  input_order='left-to-right',
+#                                                  hidden_degrees='equal',
+#                                                  activation=tf.nn.tanh,
+#                                                  kernel_initializer=self.kernel_initializer)
+      self.autonet = MaskedNet(out_event_dims,
+                               event_shape=np.prod(self.out_shape),
+                               conditional=True,
+                               conditional_event_shape=input_shape[1:],
+                               hidden_units=[self.hidden_dim,],
+                               dof_order=self.auto_groupings,
+                               activation='tanh',
+                               use_bias=True,
+                               kernel_initializer=self.kernel_initializer)
     else:
-      self.autonet = tfp.bijectors.AutoregressiveNetwork(out_event_dims,
-                                                  event_shape=np.prod(self.out_shape),
-                                                  hidden_units=[self.hidden_dim,],
-                                                  input_order='left-to-right',
-                                                  hidden_degrees='equal',
-                                                  activation=tf.nn.tanh,
-                                                  kernel_initializer=self.kernel_initializer)
+#      self.autonet = tfp.bijectors.AutoregressiveNetwork(out_event_dims,
+#                                                  event_shape=np.prod(self.out_shape),
+#                                                  hidden_units=[self.hidden_dim,],
+#                                                  input_order='left-to-right',
+#                                                  hidden_degrees='equal',
+#                                                  activation=tf.nn.tanh,
+#                                                  kernel_initializer=self.kernel_initializer)
+      self.autonet = MaskedNet(out_event_dims,
+                               event_shape=np.prod(self.out_shape),
+                               hidden_units=[self.hidden_dim,],
+                               dof_order=self.auto_groupings,
+                               activation='tanh',
+                               use_bias=True,
+                               kernel_initializer=self.kernel_initializer)
+
+  def get_truncation(self, means, coords,
+                     hs_diam=1.1611*0.82, #Actual hard-sphere diameter multiplied by 0.82
+                                          #Prevents overlaps causing energy over 5.65 kB*T
+                     box_dims=np.array([[-3.0, 3.0], [-3.0, 3.0]]),
+                     num_skip=2, #Specific to dimer particles
+                     ):
+    """Given the means of Gaussian distributions for each coordinate and coordinate values,
+uses an autoregressive-type model to truncate the distribution. For each mean, coordinates
+of lower index are used to determine the low and high cutoffs for truncating its
+distribution. These cutoffs associated with each mean are returned. If no other particles are
+closer than the box edge locations specified by "box_dims" then the box edges are used for
+truncation. Note that truncation will only be performed based on the same cartesian dimension
+of previously generated particles with similar cartesian coordinates in the other dimensions.
+    """
+    if box_dims.shape[0] != self.auto_group_size:
+      raise ValueError('Number of box dimensions for Gaussian truncation must match number of autoregressive groups! (Otherwise model will not be autoregressive)')
+    #Set up upper and lower cutoffs, just using box-based cutoffs as defaults
+    low_cuts = np.zeros(means.shape, dtype=np.float32)
+    high_cuts = np.zeros(means.shape, dtype=np.float32)
+    for i in range(self.auto_group_size):
+      #Subtract or add hard-sphere radius to box lower or upper box locations
+      low_cuts[:, i::self.auto_group_size] = box_dims[i, 0] - hs_diam*0.5
+      high_cuts[:, i::self.auto_group_size] = box_dims[i, 1] + hs_diam*0.5
+#    #Loop over means, ignoring first num_skip particles
+#    for i in range(num_skip*self.auto_group_size, means.shape[-1], self.auto_group_size):
+#      #Loop over dimensions to truncate in each one
+#      for j in range(self.auto_group_size):
+#        #Create boolean for eligible particles
+#        this_eligible = np.zeros(means.shape, dtype=bool)
+#        this_eligible[:, j:i:self.auto_group_size] = True
+#        #Loop over dimensions other than this one to find particles this one would hit
+#        #(if moved only along the j dimension)
+#        #Conservatively using half the hard-sphere diameter to define if will hit
+#        for k in range(self.auto_group_size):
+#          if k == j:
+#            continue
+#          this_compare = tf.math.logical_and((coords[:, k:i:self.auto_group_size]
+#                                              >= means[:, i+k:i+k+1]-0.5*hs_diam),
+#                                             (coords[:, k:i:self.auto_group_size]
+#                                              <= means[:, i+k:i+k+1]+0.5*hs_diam))
+#          this_eligible[:, j:i:self.auto_group_size] *= this_compare.numpy()
+#        low_eligible = this_eligible*(coords <= means[:, i+j:i+j+1]).numpy()
+#        #For lower pick largest sampled coordinate below mean (above guarantees this)
+#        low_cuts[:, i+j] = tf.reduce_max(tf.ragged.boolean_mask(coords+hs_diam,
+#                                                                low_eligible), axis=-1)
+#        #If box is closer, pick that instead
+#        low_cuts[:, i+j] = tf.maximum(low_cuts[:, i+j], box_dims[j, 0] - hs_diam*0.5)
+#        #Same for higher cutoff, but pick smallest sampled coordinate above mean
+#        high_eligible = this_eligible*(coords > means[:, i+j:i+j+1]).numpy()
+#        high_cuts[:, i+j] = tf.reduce_min(tf.ragged.boolean_mask(coords-hs_diam,
+#                                                                 high_eligible), axis=-1)
+#        high_cuts[:, i+j] = tf.minimum(high_cuts[:, i+j], box_dims[j, 1] + hs_diam*0.5)
+#        #Finally need to make sure that low_cuts < high_cuts
+#        #If this happens, just use the box cutoffs and truncation will not help the model
+#        flipped_cuts = high_cuts[:, i+j] <= low_cuts[:, i+j]
+#        low_cuts[flipped_cuts, i+j] = box_dims[j, 0] - hs_diam*0.5
+#        high_cuts[flipped_cuts, i+j] = box_dims[j, 1] + hs_diam*0.5
+    return low_cuts, high_cuts
 
   def create_dist(self, params):
     """Need a function to create a sampling distribution for the autoregressive distribution.
@@ -850,7 +1045,13 @@ If return_vars is true, params should be a list of [means, logvars].
     if self.return_vars:
       means = params[0]
       logvars = params[1]
-      base_dist = tfp.distributions.Normal(means, tf.exp(0.5*logvars))
+      try:
+        lowcuts = params[2]
+        highcuts = params[3]
+        base_dist = tfp.distributions.TruncatedNormal(means, tf.exp(0.5*logvars),
+                                                      lowcuts, highcuts)
+      except IndexError:
+        base_dist = tfp.distributions.Normal(means, tf.exp(0.5*logvars))
     else:
       base_dist = tfp.distributions.Bernoulli(logits=params, dtype='float32')
     this_dist = tfp.distributions.Independent(base_dist, reinterpreted_batch_ndims=1)
@@ -864,46 +1065,61 @@ generation (no training data provided), but useful to have at other times as wel
     """
     if self.skips and skip_input is None:
       print("If using skip connections, need to provide latent tensor as skip_input.")
-      print("Since skip_input=None, passing to self.autonet <should> through an error.")
+      print("Since skip_input=None, passing to self.autonet <should> throw an error.")
     if not self.skips and skip_input is not None:
       print("Skip connections are not in use, but skip_input is not None.")
       print("This will result in the input being ignored, so check this.")
-    #To keep track of sample, pad first degree of freedom to pass through autonet
-    mean_out = param_mean[:, :1]
-    padding = [[0, 0], [0, np.prod(self.out_shape)-1]]
+    #If the autonet has conditional inputs, the first DOF group may also be modified
+    #So first pass through autonet before breaking out first set of parameters
+    #Technically, input won't actually matter, just conditional_input for this first pass
+    mean_out = self.autonet(param_mean, conditional_input=skip_input)
+    if self.return_vars:
+      mean_out, logvar_out = tf.split(mean_out, 2, axis=-1)
+      logvar_out = (param_logvar + tf.squeeze(logvar_out, axis=-1))[:, :self.auto_group_size]
+    mean_out = (param_mean + tf.squeeze(mean_out, axis=-1))[:, :self.auto_group_size]
+    #Will need to pad to generate starting sample
+    padding = [[0, 0], [0, np.prod(self.out_shape)-self.auto_group_size]]
     #Below will fail if return_vars is True but param_logvar is not specified!
     if self.return_vars:
-      logvar_out = param_logvar[:, :1]
+      logvar_out = param_logvar[:, :self.auto_group_size]
       sample_out = self.create_dist([tf.pad(mean_out, padding),
                                      tf.pad(logvar_out, padding)]).sample()
     else:
       sample_out = self.create_dist(tf.pad(mean_out, padding)).sample()
     #Do in a loop over number of dimensions in data, sampling each based on previous
-    for i in range(1, np.prod(self.out_shape)):
+    #Stride it by the autoregressive group size, though
+    for i in range(self.auto_group_size, np.prod(self.out_shape), self.auto_group_size):
       mean_shift = self.autonet(sample_out, conditional_input=skip_input)
       if self.return_vars:
         mean_shift, logvar_shift = tf.split(mean_shift, 2, axis=-1)
         logvar_shift = tf.squeeze(logvar_shift, axis=-1)
         this_logvar = param_logvar + logvar_shift
         logvar_out = tf.concat((logvar_out,
-                                tf.gather(this_logvar, [i], axis=-1)),
+                                tf.gather(this_logvar,
+                                          np.arange(i, i+self.auto_group_size),
+                                          axis=-1)),
                                 axis=-1)
       #Add on to existing parameter information
       mean_shift = tf.squeeze(mean_shift, axis=-1)
       this_mean = param_mean + mean_shift
       mean_out = tf.concat((mean_out,
-                            tf.gather(this_mean, [i], axis=-1)),
+                            tf.gather(this_mean,
+                                      np.arange(i, i+self.auto_group_size),
+                                      axis=-1)),
                             axis=-1)
       #Sample from distribution because need values to predict next degree of freedom
       if self.return_vars:
-        this_sample = self.create_dist([this_mean, this_logvar]).sample()
+        #If want truncation, get it before sampling
+        if self.truncate_normal:
+          this_lowcut, this_highcut = self.get_truncation(this_mean, sample_out)
+          this_sample = self.create_dist([this_mean, this_logvar,
+                                          this_lowcut, this_highcut]).sample()
+        else:
+          this_sample = self.create_dist([this_mean, this_logvar]).sample()
       else:
         this_sample = self.create_dist(this_mean).sample()
       sample_out = tf.concat((sample_out[:, :i], this_sample[:, i:]), axis=-1)
-    mean_out = tf.reshape(mean_out, shape=(-1,)+self.out_shape)
-    sample_out = tf.reshape(sample_out, shape=(-1,)+self.out_shape)
     if self.return_vars:
-      logvar_out = tf.reshape(logvar_out, shape=(-1,)+self.out_shape)
       if sample_only:
         return sample_out
       else:
@@ -929,9 +1145,19 @@ generation (no training data provided), but useful to have at other times as wel
       mean_shift = self.autonet(self.flatten(train_data), conditional_input=latent_tensor)
       if self.return_vars:
         mean_shift, logvar_shift = tf.squeeze(tf.split(mean_shift, 2, axis=-1), axis=-1)
-        mean_out = tf.reshape(param_mean + mean_shift, shape=(-1,)+self.out_shape)
-        logvar_out = tf.reshape(param_logvar + logvar_shift, shape=(-1,)+self.out_shape)
-        return mean_out, logvar_out
+        mean_out = param_mean + mean_shift
+        logvar_out = param_logvar + logvar_shift
+        if self.truncate_normal:
+          low_out, high_out = self.get_truncation(mean_out, self.flatten(train_data))
+          mean_out = tf.reshape(mean_out, shape=(-1,)+self.out_shape)
+          logvar_out = tf.reshape(logvar_out, shape=(-1,)+self.out_shape)
+          low_out = tf.reshape(low_out, shape=(-1,)+self.out_shape)
+          high_out = tf.reshape(high_out, shape=(-1,)+self.out_shape)
+          return mean_out, logvar_out, low_out, high_out
+        else:
+          mean_out = tf.reshape(mean_out, shape=(-1,)+self.out_shape)
+          logvar_out = tf.reshape(logvar_out, shape=(-1,)+self.out_shape)
+          return mean_out, logvar_out
       else:
         mean_out = tf.reshape(param_mean + tf.squeeze(mean_shift, axis=-1),
                               shape=(-1,)+self.out_shape)
@@ -945,11 +1171,27 @@ generation (no training data provided), but useful to have at other times as wel
       else:
         skip_input = None
       if self.return_vars:
-        return self.create_sample(param_mean, param_logvar,
-                                  sample_only=False, skip_input=skip_input)
+        mean_out, logvar_out, sample_out = self.create_sample(param_mean, param_logvar,
+                                                    sample_only=False, skip_input=skip_input)
+        if self.truncate_normal:
+          low_out, high_out = self.get_truncation(mean_out, self.flatten(sample_out))
+          mean_out = tf.reshape(mean_out, shape=(-1,)+self.out_shape)
+          logvar_out = tf.reshape(logvar_out, shape=(-1,)+self.out_shape)
+          low_out = tf.reshape(low_out, shape=(-1,)+self.out_shape)
+          high_out = tf.reshape(high_out, shape=(-1,)+self.out_shape)
+          sample_out = tf.reshape(sample_out, shape=(-1,)+self.out_shape)
+          return mean_out, logvar_out, low_out, high_out, sample_out
+        else:
+          mean_out = tf.reshape(mean_out, shape=(-1,)+self.out_shape)
+          logvar_out = tf.reshape(logvar_out, shape=(-1,)+self.out_shape)
+          sample_out = tf.reshape(sample_out, shape=(-1,)+self.out_shape)
+          return mean_out, logvar_out, sample_out
       else:
-        return self.create_sample(param_mean,
-                                  sample_only=False, skip_input=skip_input)
+        mean_out, sample_out = self.create_sample(param_mean,
+                                                  sample_only=False, skip_input=skip_input)
+        mean_out = tf.reshape(mean_out, shape=(-1,)+self.out_shape)
+        sample_out = tf.reshape(sample_out, shape=(-1,)+self.out_shape)
+        return mean_out, sample_out
 
 
 class AutoConvDecoder(tf.keras.layers.Layer):
