@@ -188,9 +188,9 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #Would still like to provide a wrapper in dataloaders.py
   #Will make more generalizable in case data format changes
   #But, something weird with batching happens if you use keras loss functions
-  #trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
-  trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
-                                                 dset='all', permute=True)#, center_and_whiten=True)
+  trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
+  #trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
+  #                                               dset='all', permute=True)#, center_and_whiten=True)
   #trainData = dataloaders.raw_image_data(data_file)
   #trainData, valData = dataloaders.dsprites_data(batch_size, val_frac=0.01)
 
@@ -205,15 +205,15 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
                                       )
 
   #Specify the loss function we want to use
-  #loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True,
-  #                                reduction=tf.keras.losses.Reduction.SUM)
+  loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True,
+                                  reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = tf.keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = losses.ReconLoss()
   #loss_fn = losses.diag_gaussian_loss
   #loss_fn = losses.ReconLoss(loss_fn=losses.diag_gaussian_loss, activation=None,
   #                           reduction=tf.keras.losses.Reduction.SUM)
-  loss_fn = losses.AutoregressiveLoss(model.decoder,
-                                      reduction=tf.keras.losses.Reduction.SUM)
+  #loss_fn = losses.AutoregressiveLoss(model.decoder,
+  #                                    reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = losses.AutoConvLoss(model.decoder,
   #                              reduction=tf.keras.losses.Reduction.SUM)
 
@@ -284,7 +284,10 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
             model.metrics[0].result(), model.metrics[1].result(), val_extra_loss))
 
   print("Training completed at: %s"%time.ctime())
-  print(model.summary())
+  try:
+    print(model.summary())
+  except ValueError:
+    print('Would print summary, but part of model has not yet been built.')
 
   #print(train_history.history)
 
