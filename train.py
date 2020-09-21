@@ -193,6 +193,7 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #                                               dset='all', permute=True)#, center_and_whiten=True)
   #trainData = dataloaders.raw_image_data(data_file)
   #trainData, valData = dataloaders.dsprites_data(batch_size, val_frac=0.01)
+  #trainData, valData = dataloaders.ala_dipeptide_data(data_file, batch_size, val_frac=0.05)
 
   #Set up path for checkpoint files
   checkpoint_path = os.path.join(save_dir, 'training.ckpt')
