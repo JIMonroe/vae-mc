@@ -147,11 +147,11 @@ accomplished with BAT coordinates and only passing DOFs that aren't bonds.
     bond_inds = [6, 7]
     #Next have all bonds, with this number depending on number of atoms
     #For polymer, should just have one bead per monomer, so Nbonds = N-1
-    for b in range(9, rawData.shape[1]//3 - 3):
+    for b in range(9, 9 + rawData.shape[1]//3 - 3):
       bond_inds.append(b)
     bond_mask = np.ones(rawData.shape[1], dtype=bool)
     bond_mask[bond_inds] = False
-    rawData = rawData[bond_mask]
+    rawData = rawData[:, bond_mask]
   #If have no cyclic structures, above should work for any bond topography
   #Can also consider masking out root atom translation and rigid rotation DOFs
   #Save some fraction of data for validation
