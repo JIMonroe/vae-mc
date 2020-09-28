@@ -120,7 +120,7 @@ def ala_dipeptide_data(datafile, batch_size, val_frac=0.01):
   """Loads data for alanine dipeptide. Can load either XYZ or BAT coordinates, but in
 analysis, make sure to also use MDAnalysis.analysis.bat to switch between them if needed.
   """
-  rawData = np.loadtxt(datafile)
+  rawData = np.load(datafile).astype('float32')
   #Save some fraction of data for validation
   valInd = int((1.0-val_frac)*rawData.shape[0])
   trainData = tf.data.Dataset.from_tensor_slices(rawData[:valInd])
