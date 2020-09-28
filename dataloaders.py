@@ -138,7 +138,7 @@ analysis, make sure to also use MDAnalysis.analysis.bat to switch between them i
 If have rigid bonds, best to incorporate these constraints into model, which is naturally
 accomplished with BAT coordinates and only passing DOFs that aren't bonds.
   """
-  rawData = np.loadtxt(datafile).astype('float32')
+  rawData = np.load(datafile).astype('float32')
   #If have rigid bonds (and have BAT coordinates so can constrain them for VAE model)
   #then want to identify them and mask them out in the training data
   #First 3 DOFs are root atom coordinates, next three are rotational coordinates
@@ -151,7 +151,7 @@ accomplished with BAT coordinates and only passing DOFs that aren't bonds.
       bond_inds.append(b)
     bond_mask = np.ones(rawData.shape[1], dtype=bool)
     bond_mask[bond_inds] = False
-    rawData = rawData[bond_mask)
+    rawData = rawData[bond_mask]
   #If have no cyclic structures, above should work for any bond topography
   #Can also consider masking out root atom translation and rigid rotation DOFs
   #Save some fraction of data for validation
