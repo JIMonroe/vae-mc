@@ -78,7 +78,7 @@ class FCEncoder(tf.keras.layers.Layer):
     #If have periodic DOFs, want to convert to 2D non-periodic coordinates in first step
     if self.any_periodic:
       flattened_out_p = tf.boolean_mask(flattened_out, self.periodic_dofs, axis=1)
-      flattend_out_nonp = tf.boolean_mask(flattened_out,
+      flattened_out_nonp = tf.boolean_mask(flattened_out,
                                           tf.math.logical_not(self.periodic_dofs), axis=1)
       cos_p = tf.math.cos(flattened_out_p)
       sin_p = tf.math.sin(flattened_out_p)

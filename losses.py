@@ -560,7 +560,7 @@ decoders autoregressive probability distribution.
       flat_recon = self.decoder.flatten(recon_info)
     #If have periodic DOFs, need to unstack the DOFs before passing to log_prob
     if self.decoder.any_periodic:
-      flat_true = np.unstack(flat_true, axis=1)
+      flat_true = tf.unstack(flat_true, axis=1)
     log_p = self.decoder.create_dist(flat_recon).log_prob(flat_true)
     return -log_p
 
