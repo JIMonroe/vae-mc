@@ -53,11 +53,15 @@ class FCEncoder(tf.keras.layers.Layer):
   """
 
   def __init__(self, num_latent, name='encoder', hidden_dim=1200,
+               periodic_dofs=[False,],
                kernel_initializer='glorot_uniform',
                **kwargs):
     super(FCEncoder, self).__init__(name=name, **kwargs)
     self.num_latent = num_latent
     self.hidden_dim = hidden_dim
+    #Set up periodic DOF boolean list
+    self.any_periodic = np.any(periodic_dofs)
+    self.periodic_dofs = periodic_dofs
     self.kernel_initializer = kernel_initializer
     self.flattened = tf.keras.layers.Flatten()
     self.e1 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.relu, name="e1",
@@ -71,6 +75,14 @@ class FCEncoder(tf.keras.layers.Layer):
 
   def call(self, input_tensor):
     flattened_out = self.flattened(input_tensor)
+    #If have periodic DOFs, want to convert to 2D non-periodic coordinates in first step
+    if self.any_periodic:
+      flattened_out_p = tf.boolean_mask(flattened_out, self.periodic_dofs, axis=1)
+      flattend_out_nonp = tf.boolean_mask(flattened_out,
+                                          tf.math.logical_not(self.periodic_dofs), axis=1)
+      cos_p = tf.math.cos(flattened_out_p)
+      sin_p = tf.math.sin(flattened_out_p)
+      flattened_out = tf.concat([flattened_out_nonp, cos_p, sin_p], axis=-1)
     e1_out = self.e1(flattened_out)
     e2_out = self.e2(e1_out)
     means_out = self.means(e2_out)
