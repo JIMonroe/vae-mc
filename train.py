@@ -212,10 +212,10 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #loss_fn = tf.keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = losses.ReconLoss()
   #loss_fn = losses.diag_gaussian_loss
-  loss_fn = losses.ReconLoss(loss_fn=losses.diag_gaussian_loss, activation=None,
-                             reduction=tf.keras.losses.Reduction.SUM)
-  #loss_fn = losses.AutoregressiveLoss(model.decoder,
-  #                                    reduction=tf.keras.losses.Reduction.SUM)
+  #loss_fn = losses.ReconLoss(loss_fn=losses.diag_gaussian_loss, activation=None,
+  #                           reduction=tf.keras.losses.Reduction.SUM)
+  loss_fn = losses.AutoregressiveLoss(model.decoder,
+                                      reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = losses.AutoConvLoss(model.decoder,
   #                              reduction=tf.keras.losses.Reduction.SUM)
 
