@@ -144,24 +144,25 @@ accomplished with BAT coordinates and only passing DOFs that aren't bonds.
   #then want to identify them and mask them out in the training data
   #First 3 DOFs are root atom coordinates, next three are rotational coordinates
   #Next 2 are first two bonds, then we have the first angle
+  totDOFs = rawData.shape[1]
   if 'BAT' in datafile and rigid_bonds:
 
     bond_inds = list(range(8)) #[6, 7] Masking rigid translation and rotation as well
     #Next have all bonds, with this number depending on number of atoms
     #For polymer, should just have one bead per monomer, so Nbonds = N-1
-    for b in range(9, 9 + rawData.shape[1]//3 - 3):
+    for b in range(9, 9 + totDOFs//3 - 3):
       bond_inds.append(b)
-    bond_mask = np.ones(rawData.shape[1], dtype=bool)
+    bond_mask = np.ones(totDOFs, dtype=bool)
     bond_mask[bond_inds] = False
     rawData = rawData[:, bond_mask]
 
     #Also reorder so that autoregressive model predicts angle, dihedral, angle dihedral, etc.
     dof_order = []
-    for a in range(rawData.shape[1]//3 - 2): #Number of angles
+    for a in range(totDOFs//3 - 2): #Number of angles
       dof_order.append(a)
       #Only add dihedral if have any left
-      if a < rawData.shape[1]//3 - 3:
-        dof_order.append(a + rawData.shape[1]//3 - 2)
+      if a < totDOFs//3 - 3:
+        dof_order.append(a + totDOFs//3 - 2)
     rawData = rawData[:, dof_order]
 
   #If have no cyclic structures, above should work for any bond topography
