@@ -344,6 +344,7 @@ their paper 'Variational Lossy Autoencoder.'
                                              periodic_dofs=self.periodic_dofs)
       if self.autoregress:
         self.decoder = architectures.AutoregressiveDecoder(data_shape,
+                                                           hidden_dim=1200,
                                                            return_vars=self.include_vars,
                                                            skip_connections=self.use_skips,
                                                            auto_group_size=self.n_auto_group,
