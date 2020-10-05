@@ -156,14 +156,22 @@ accomplished with BAT coordinates and only passing DOFs that aren't bonds.
     bond_mask[bond_inds] = False
     rawData = rawData[:, bond_mask]
 
-    #Also reorder so that autoregressive model predicts angle, dihedral, angle dihedral, etc.
-    dof_order = []
-    for a in range(totDOFs//3 - 2): #Number of angles
-      dof_order.append(a)
-      #Only add dihedral if have any left
-      if a < totDOFs//3 - 3:
-        dof_order.append(a + totDOFs//3 - 2)
-    rawData = rawData[:, dof_order]
+    #Input sine-cosine pairs instead of dihedral angles
+    #With autoregressive it's easier to just work with those throughout
+    torsion_sin = np.sin(rawData[:, -(totDOFs//3 - 3):]
+    torsion_cos = np.cos(rawData[:, -(totDOFs//3 - 3):]
+    rawData = np.concatenate([rawData[:, :-(totDOFs//3 - 3)],
+                              torsion_sin,
+                              torsion_cos], axis=1)
+
+    ##Also reorder so that autoregressive model predicts angle, dihedral, angle dihedral, etc.
+    #dof_order = []
+    #for a in range(totDOFs//3 - 2): #Number of angles
+    #  dof_order.append(a)
+    #  #Only add dihedral if have any left
+    #  if a < totDOFs//3 - 3:
+    #    dof_order.append(a + totDOFs//3 - 2)
+    #rawData = rawData[:, dof_order]
 
   #If have no cyclic structures, above should work for any bond topography
   #Can also consider masking out root atom translation and rigid rotation DOFs

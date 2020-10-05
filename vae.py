@@ -340,8 +340,8 @@ their paper 'Variational Lossy Autoencoder.'
       else:
         self.decoder = architectures.DeconvDecoder(self.data_shape)
     else:
-      self.encoder = architectures.FCEncoder(num_latent, hidden_dim=1200,
-                                             periodic_dofs=self.periodic_dofs)
+      self.encoder = architectures.FCEncoder(num_latent, hidden_dim=1200)
+                                             #periodic_dofs=self.periodic_dofs)
       if self.autoregress:
         self.decoder = architectures.AutoregressiveDecoder(data_shape,
                                                            hidden_dim=1200,
