@@ -158,8 +158,8 @@ accomplished with BAT coordinates and only passing DOFs that aren't bonds.
 
     #Input sine-cosine pairs instead of dihedral angles
     #With autoregressive it's easier to just work with those throughout
-    torsion_sin = np.sin(rawData[:, -(totDOFs//3 - 3):]
-    torsion_cos = np.cos(rawData[:, -(totDOFs//3 - 3):]
+    torsion_sin = np.sin(rawData[:, -(totDOFs//3 - 3):])
+    torsion_cos = np.cos(rawData[:, -(totDOFs//3 - 3):])
     rawData = np.concatenate([rawData[:, :-(totDOFs//3 - 3)],
                               torsion_sin,
                               torsion_cos], axis=1)
