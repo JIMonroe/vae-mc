@@ -1100,6 +1100,7 @@ If return_vars is true, params should be a list of [means, logvars].
           base_dist = tfp.distributions.JointDistributionSequential(base_dist_list)
         else:
           base_dist = tfp.distributions.Normal(means, tf.exp(0.5*logvars))
+          #base_dist = tfp.distributions.Laplace(means, tf.exp(logvars))
     else:
       base_dist = tfp.distributions.Bernoulli(logits=params, dtype='float32')
     if self.any_periodic:
