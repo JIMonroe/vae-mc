@@ -53,11 +53,15 @@ class FCEncoder(tf.keras.layers.Layer):
   """
 
   def __init__(self, num_latent, name='encoder', hidden_dim=1200,
+               #periodic_dofs=[False,],
                kernel_initializer='glorot_uniform',
                **kwargs):
     super(FCEncoder, self).__init__(name=name, **kwargs)
     self.num_latent = num_latent
     self.hidden_dim = hidden_dim
+    #Set up periodic DOF boolean list
+    #self.any_periodic = np.any(periodic_dofs)
+    #self.periodic_dofs = periodic_dofs
     self.kernel_initializer = kernel_initializer
     self.flattened = tf.keras.layers.Flatten()
     self.e1 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.relu, name="e1",
@@ -71,6 +75,14 @@ class FCEncoder(tf.keras.layers.Layer):
 
   def call(self, input_tensor):
     flattened_out = self.flattened(input_tensor)
+    #If have periodic DOFs, want to convert to 2D non-periodic coordinates in first step
+    #if self.any_periodic:
+    #  flattened_out_p = tf.boolean_mask(flattened_out, self.periodic_dofs, axis=1)
+    #  flattened_out_nonp = tf.boolean_mask(flattened_out,
+    #                                      tf.math.logical_not(self.periodic_dofs), axis=1)
+    #  cos_p = tf.math.cos(flattened_out_p)
+    #  sin_p = tf.math.sin(flattened_out_p)
+    #  flattened_out = tf.concat([flattened_out_nonp, cos_p, sin_p], axis=-1)
     e1_out = self.e1(flattened_out)
     e2_out = self.e2(e1_out)
     means_out = self.means(e2_out)
@@ -900,6 +912,7 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
                skip_connections=True,
                auto_group_size=1,
                truncate_normal=False,
+               periodic_dofs=[False,],
                **kwargs):
     super(AutoregressiveDecoder, self).__init__(name=name, **kwargs)
     self.out_shape = out_shape
@@ -907,7 +920,20 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
     self.kernel_initializer=kernel_initializer
     self.return_vars = return_vars
     self.skips = skip_connections
+    #Specify if normal distributions should be truncated at box size
+    #ONLY APPLICABLE TO 2D PARTICLE DIMER SYSTEM!
     self.truncate_normal = truncate_normal
+    #Specify which DOFs should be periodic and use VonMises distribution
+    self.any_periodic = np.any(periodic_dofs)
+    if self.any_periodic:
+      #Check if number of specified DOFs match output shape
+      if np.prod(out_shape) != len(periodic_dofs):
+        raise ValueError('Length of periodic_dofs does not match flattened out_shape.'
+                         +'\nIf specifying any periodic DOFs, must specify for all DOFs')
+      else:
+        self.periodic_dofs = periodic_dofs
+    else:
+      self.periodic_dofs = [False,]*np.prod(out_shape)
     #Specify how to group DOFs together when autoregressing based on group size
     self.auto_group_size = auto_group_size
     #For all separate (default if None when pass to MaskedNet) get [1, 2, 3, 4,...]
@@ -1051,10 +1077,36 @@ If return_vars is true, params should be a list of [means, logvars].
         base_dist = tfp.distributions.TruncatedNormal(means, tf.exp(0.5*logvars),
                                                       lowcuts, highcuts)
       except IndexError:
-        base_dist = tfp.distributions.Normal(means, tf.exp(0.5*logvars))
+        #For periodic DOFs, need to build list of distributions
+        #For 'True' values, use VonMises, for 'False' use Normal
+        if self.any_periodic:
+          base_dist_list = []
+          for i in range(means.shape[1]):
+            if self.periodic_dofs[i]:
+              #base_dist_list.append(tfp.distributions.VonMises(means[:, i],
+              #                                                 tf.exp(-logvars[:, i])))
+              base_dist_list.append(tfp.distributions.TruncatedNormal(means[:, i],
+                                                               tf.exp(0.5*logvars[:, i]),
+                                                               -tf.ones((means.shape[0], 1)),
+                                                               tf.ones((means.shape[0], 1))))
+            else:
+              base_dist_list.append(tfp.distributions.Normal(means[:, i],
+                                                             tf.exp(0.5*logvars[:, i])))
+          #Join together into a joint distribution
+          #This is not as nice to work with as Independent, but will be ok
+          #log_prob() function will return in same way
+          #But sample() will give list of tensors for each DOF, so will need to stack them
+          #(and unstack to feed into log_prob())
+          base_dist = tfp.distributions.JointDistributionSequential(base_dist_list)
+        else:
+          base_dist = tfp.distributions.Normal(means, tf.exp(0.5*logvars))
+          #base_dist = tfp.distributions.Laplace(means, tf.exp(logvars))
     else:
       base_dist = tfp.distributions.Bernoulli(logits=params, dtype='float32')
-    this_dist = tfp.distributions.Independent(base_dist, reinterpreted_batch_ndims=1)
+    if self.any_periodic:
+      this_dist = base_dist
+    else:
+      this_dist = tfp.distributions.Independent(base_dist, reinterpreted_batch_ndims=1)
     return this_dist
 
   def create_sample(self, param_mean,
@@ -1084,6 +1136,9 @@ generation (no training data provided), but useful to have at other times as wel
       logvar_out = param_logvar[:, :self.auto_group_size]
       sample_out = self.create_dist([tf.pad(mean_out, padding),
                                      tf.pad(logvar_out, padding)]).sample()
+      #If periodic DOFs, sample needs to be stacked together
+      if self.any_periodic:
+        sample_out = tf.stack(sample_out, axis=1)
     else:
       sample_out = self.create_dist(tf.pad(mean_out, padding)).sample()
     #Do in a loop over number of dimensions in data, sampling each based on previous
@@ -1116,6 +1171,9 @@ generation (no training data provided), but useful to have at other times as wel
                                           this_lowcut, this_highcut]).sample()
         else:
           this_sample = self.create_dist([this_mean, this_logvar]).sample()
+          #Again stack back together if had any periodic DOFs
+          if self.any_periodic:
+            this_sample = tf.stack(this_sample, axis=1)
       else:
         this_sample = self.create_dist(this_mean).sample()
       sample_out = tf.concat((sample_out[:, :i], this_sample[:, i:]), axis=-1)

@@ -308,9 +308,13 @@ their paper 'Variational Lossy Autoencoder.'
                name='priorflow_vae', arch='fc',
                autoregress=False, include_vars=False,
                beta=1.0, flow_type='rqs',
+               e_hidden_dim=1200,
+               f_hidden_dim=200,
+               d_hidden_dim=1200,
                use_skips=True,
                n_auto_group=1,
                truncate_norm=False,
+               periodic_dof_inds=[],
                **kwargs):
     super(PriorFlowVAE, self).__init__(name=name, **kwargs)
     self.data_shape = data_shape
@@ -318,12 +322,21 @@ their paper 'Variational Lossy Autoencoder.'
     self.autoregress = autoregress
     self.include_vars = include_vars
     self.beta = beta
+    self.e_hidden_dim = 1200
+    self.f_hidden_dim = 200
+    self.d_hidden_dim = 1200
     #By default, use fully-connect (fc) architecture for neural nets
     #Can switch to convolutional if specify arch='conv' (won't have flow, though)
     self.arch = arch
     self.use_skips = use_skips
     self.n_auto_group = n_auto_group
+    #Can truncate normal distributions, but only makes sense for particle dimer!
     self.truncate_norm = truncate_norm
+    #Allow periodic DOFs using VonMises distribution instead of Normal
+    #This specifies their indices and builds boolean mask to pass to AutoregressiveDecoder
+    self.periodic_dofs = [False,]*data_shape[0]
+    for i in periodic_dof_inds:
+      self.periodic_dofs[i] = True
     if self.arch == 'conv':
       self.encoder = architectures.ConvEncoder(num_latent)
       if self.autoregress:
@@ -333,18 +346,22 @@ their paper 'Variational Lossy Autoencoder.'
       else:
         self.decoder = architectures.DeconvDecoder(self.data_shape)
     else:
-      self.encoder = architectures.FCEncoder(num_latent, hidden_dim=1200)
+      self.encoder = architectures.FCEncoder(num_latent, hidden_dim=self.e_hidden_dim)
+                                             #periodic_dofs=self.periodic_dofs)
       if self.autoregress:
         self.decoder = architectures.AutoregressiveDecoder(data_shape,
+                                                           hidden_dim=self.d_hidden_dim,
                                                            return_vars=self.include_vars,
                                                            skip_connections=self.use_skips,
                                                            auto_group_size=self.n_auto_group,
-                                                           truncate_normal=self.truncate_norm)
+                                                           truncate_normal=self.truncate_norm,
+                                                           periodic_dofs=self.periodic_dofs)
       else:
-        self.decoder = architectures.FCDecoder(data_shape, return_vars=self.include_vars)
+        self.decoder = architectures.FCDecoder(data_shape, return_vars=self.include_vars,
+                                               hidden_dim=self.d_hidden_dim)
     self.sampler = architectures.SampleLatent()
     if flow_type == 'affine':
-      flow_net_params = {'num_hidden':2, 'hidden_dim':200,
+      flow_net_params = {'num_hidden':2, 'hidden_dim':self.f_hidden_dim,
                          'nvp_split':True, 'activation':tf.nn.relu}
       self.flow = architectures.NormFlowRealNVP(num_latent,
                                                 kernel_initializer='truncated_normal',
@@ -352,7 +369,8 @@ their paper 'Variational Lossy Autoencoder.'
                                                 num_blocks=4)
     #Default is rqs, but lazily don't catch if put something other than affine or rqs
     else:
-      flow_net_params = {'bin_range':[-10.0, 10.0], 'num_bins':32, 'hidden_dim':200}
+      flow_net_params = {'bin_range':[-10.0, 10.0], 'num_bins':32,
+                         'hidden_dim':self.f_hidden_dim}
       self.flow = architectures.NormFlowRQSplineRealNVP(self.num_latent,
                                                         kernel_initializer='truncated_normal',
                                                         rqs_params=flow_net_params)
