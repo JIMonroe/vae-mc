@@ -132,8 +132,10 @@ analysis, make sure to also use MDAnalysis.analysis.bat to switch between them i
     bond_inds = list(range(8)) #[6, 7] Masking rigid translation and rotation too
     #Next have all bonds, with number being Natoms - 1
     #Even for cyclic compounds, this will be the case because we mean "independent DOF bonds"
-    for b in range(9, 9 + totDOFs//3 - 3):
-      bond_inds.append(b)
+    #But not all bonds are constrained... so pick these out manually
+    #for b in range(9, 9 + totDOFs//3 - 3):
+    #  bond_inds.append(b)
+    bond_inds = bond_inds + [9, 11, 12, 13, 15, 17, 18, 19, 21, 24, 25, 26]
     bond_mask = np.ones(totDOFs, dtype=bool)
     bond_mask[bond_inds] = False
     rawData = rawData[:, bond_mask]
