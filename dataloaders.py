@@ -143,7 +143,7 @@ analysis, make sure to also use MDAnalysis.analysis.bat to switch between them i
 
     #Instead of dihedral angles, input sine-cosine pairs
     #Will have Natoms - 3 dihedral angles in BAT coordinates and will be at end
-    torsion_sin = np.sin(rawData[:, -(totDOFS//3 - 3):])
+    torsion_sin = np.sin(rawData[:, -(totDOFs//3 - 3):])
     torsion_cos = np.cos(rawData[:, -(totDOFs//3 - 3):])
     rawData = np.concatenate([rawData[:, :-(totDOFs//3 - 3)],
                               torsion_sin,
