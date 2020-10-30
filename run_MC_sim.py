@@ -53,12 +53,12 @@ print("Loaded data from files: ", dat_files)
 zDraw = mc_moves.zDrawFunc_wrap_VAE(data, vaeModel)
 
 #Select random configurations as starting points for batch of MC simulations
-rand_inds = np.random.choice(data.shape[0], size=10, replace=False)
+rand_inds = np.random.choice(data.shape[0], size=100, replace=False)
 curr_config = data[rand_inds]
 curr_U = losses.latticeGasHamiltonian(curr_config, **energy_params).numpy()
 
 #Set up statistics
-num_steps = 20
+num_steps = 30000
 num_acc = np.zeros(curr_config.shape[0])
 mc_stats = np.zeros((curr_config.shape[0], num_steps, 8))
 N_traj = np.zeros((curr_config.shape[0], num_steps+1))
