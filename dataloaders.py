@@ -129,7 +129,8 @@ analysis, make sure to also use MDAnalysis.analysis.bat to switch between them i
   totDOFs = rawData.shape[1]
   if 'BAT' in datafile and rigid_bonds:
 
-    bond_inds = list(range(8)) #[6, 7] Masking rigid translation and rotation too
+    bond_inds = list(range(6)) #[6, 7] Masking rigid translation and rotation too
+    #First two bonds don't involve hydrogens, so not constrained
     #Next have all bonds, with number being Natoms - 1
     #Even for cyclic compounds, this will be the case because we mean "independent DOF bonds"
     #But not all bonds are constrained... so pick these out manually
