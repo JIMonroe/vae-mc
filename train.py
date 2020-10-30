@@ -188,12 +188,12 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #Would still like to provide a wrapper in dataloaders.py
   #Will make more generalizable in case data format changes
   #But, something weird with batching happens if you use keras loss functions
-  trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
+  #trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
   #trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
   #                                               dset='all', permute=True)#, center_and_whiten=True)
   #trainData = dataloaders.raw_image_data(data_file)
   #trainData, valData = dataloaders.dsprites_data(batch_size, val_frac=0.01)
-  #trainData, valData = dataloaders.ala_dipeptide_data(data_file, batch_size, val_frac=0.05)
+  trainData, valData = dataloaders.ala_dipeptide_data(data_file, batch_size, val_frac=0.05, rigid_bonds=True)
   #trainData, valData = dataloaders.polymer_data(data_file, batch_size, val_frac=0.05, rigid_bonds=True)
 
   #Set up path for checkpoint files
@@ -207,15 +207,15 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
                                       )
 
   #Specify the loss function we want to use
-  loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True,
-                                  reduction=tf.keras.losses.Reduction.SUM)
+  #loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True,
+  #                                reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = tf.keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = losses.ReconLoss()
   #loss_fn = losses.diag_gaussian_loss
   #loss_fn = losses.ReconLoss(loss_fn=losses.diag_gaussian_loss, activation=None,
   #                           reduction=tf.keras.losses.Reduction.SUM)
-  #loss_fn = losses.AutoregressiveLoss(model.decoder,
-  #                                    reduction=tf.keras.losses.Reduction.SUM)
+  loss_fn = losses.AutoregressiveLoss(model.decoder,
+                                      reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = losses.AutoConvLoss(model.decoder,
   #                              reduction=tf.keras.losses.Reduction.SUM)
 
