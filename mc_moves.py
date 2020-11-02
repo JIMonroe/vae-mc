@@ -281,6 +281,41 @@ called with different styles of draws for z.
     return logPacc, newConfig, newU
 
 
+def vaeBias(vae_model, x, nSample=1000):
+  """Biasing function in full-space coordinates to ensure flat sampling along latent-space.
+  This requires averaging P(z) over P(z|x) and inverting to obtain the bias. Will return
+  the log of the average P(z), so the negated free energy along z associated with x. This bias
+  should be added to log probabilities, or -beta*dU. Note that this is a MC estimate of
+  the true bias, so will be correct for infinite nSample or over many MC steps. In other
+  words, if applied in an MC simulation, will satisfy detailed balance on average, but not
+  on every step.
+  """
+  #Define batch size
+  batch_size = x.shape[0]
+  #Generate the mean and log variance of the normal distribution for z given x
+  zMean, zLogvar = vae_model.encoder(tf.cast(x, 'float32'))
+  #And sample nSample times for each x
+  z = vae_model.sampler(tf.tile(zMean, (nSample,1)), tf.tile(zLogvar, (nSample,1)))
+  log_det = 0.0
+  #If have prior flow, need to apply to calculate P(z) in terms of known standard normal
+  if 'prior' in vae_model.name:
+    z, log_det = vae_model.flow(z, reverse=True)
+    log_det = tf.reshape(log_det, (nSample, batch_size, 1))
+  z = tf.reshape(z, (nSample,)+zMean.shape)
+  #P(z) should be standard normal (except for prior flow, where augment with log_det)
+  #Note that bias will be off if flow is poor or model not trained well enough that P(z) is
+  #approximately standard normal
+  #For numerical stability, subract maximum term
+  ln_p_z = -0.5*(z*z) + log_det # - 0.5*np.log(2.0*np.pi)
+  max_term = tf.reduce_max(z, axis=0)
+  p_z = np.exp(ln_p_z - max_term)
+  #Compute bias 
+  bias = -(tf.math.log(tf.reduce_mean(p_z, axis=0)) + max_term)
+  #Sum over z dimensions (independent Gaussian distributions)
+  bias = tf.reduce_sum(bias, axis=1)
+  return bias
+
+
 class zDrawFunc_wrap_InvNet(object):
   """Based on data, wraps all functions to draw z values. Allows to precompute statistics
 given data so that don't have to redo every MC step. Also need to provide a InvNet model for
