@@ -114,6 +114,10 @@ interpreting the data.
       z_draw, log_prob =  zDrawNormal(tf.zeros(self.trueMean.shape),
                                       tf.zeros(self.trueLogVar.shape),
                                       zSel=zSel, nDraws=nDraws, batch_size=batch_size)
+    elif draw_type == 'std_uniform':
+      z_draw, log_prob = zDrawUniform(-5.0*tf.ones(self.trueMean.shape),
+                                      5.0*tf.ones(self.trueMean.shape),
+                                      zSel=zSel, nDraws=nDraws, batch_size=batch_size)
     elif draw_type == 'normal':
       z_draw, log_prob = zDrawNormal(self.trueMean, self.trueLogVar,
                                      zSel=zSel, nDraws=nDraws, batch_size=batch_size)
@@ -314,6 +318,28 @@ def vaeBias(vae_model, x, nSample=1000):
   #Sum over z dimensions (independent Gaussian distributions)
   bias = tf.reduce_sum(bias, axis=1)
   return bias
+
+
+def moveVAEbiased(currConfig, currU, vaeModel, B, energyFunc, zDrawFunc, energyParams={}, samplerParams={}, zDrawType='uniform', verbose=False):
+  """Augments moveVAE with bias along latent space coordinate based on VAE model. May be best
+to use uniform z-sampling with this scheme, but will need to test.
+  """
+  #First call regular VAE move, then compute bias and augment log probability
+  move_info = moveVAE(currConfig, currU, vaeModel, B, energyFunc, zDrawFunc,
+                      energyParams=energyParams, samplerParams=samplerParams,
+                      zDrawType=zDrawType, verbose=verbose)
+  logPacc = move_info[0]
+  newConfig = move_info[1]
+  newU = move_info[2]
+  bias_curr = vaeBias(vaeModel, currConfig)
+  bias_new = vaeBias(vaeModel, newConfig)
+  logPacc = logPacc + (bias_new - bias_curr)
+  if verbose:
+    full_info = move_info[3]
+    full_info += [bias_curr, bias_new]
+    return logPacc, newConfig, newU, full_info
+  else:
+    return logPacc, newConfig, newU
 
 
 class zDrawFunc_wrap_InvNet(object):
