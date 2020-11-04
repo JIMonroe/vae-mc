@@ -7,6 +7,51 @@ import tensorflow as tf
 from libVAE import dataloaders, losses, vae, mc_moves
 
 
+#Define function to save trajectory if we want to
+#Same as in simLG.sim_2D
+def createDataFile(fileName, L, biasRange=None):
+  """Create and return a netcdf Dataset object to hold simulation data.
+     Handles to important variables within the dataset are also returned."""
+
+  outDat = Dataset(fileName, "w", format="NETCDF4") 
+  outDat.history = "Created " + time.ctime(time.time())
+  outDat.createDimension("steps", None)
+  outDat.createDimension("x", L)
+  outDat.createDimension("y", L)
+  if biasRange is None:
+    outDat.createDimension("N", L*L+1)
+  else:
+    outDat.createDimension("N", biasRange[1]-biasRange[0]+1)
+  steps = outDat.createVariable("steps", "u8", ("steps",))
+  steps.units = "MC steps"
+  x = outDat.createVariable("x", "i4", ("x",))
+  x.units = "lattice unit"
+  x[:] = np.arange(L, dtype=int)
+  y = outDat.createVariable("y", "i4", ("y",))
+  y.units = "lattice unit"
+  y[:] = np.arange(L, dtype=int)
+  U = outDat.createVariable("U", "f8", ("steps",))
+  U.units = "energy"
+  config = outDat.createVariable("config", "u1", ("steps", "x", "y",))
+  config.units = "particle positions on lattice"
+  N = outDat.createVariable("N", "i4", ("N",))
+  N.units = "number particles"
+  if biasRange is None:
+    N[:] = np.arange(L*L+1, dtype=int)
+  else:
+    N[:] = np.arange(biasRange[0], biasRange[1]+1, dtype=int)
+  biasVals = outDat.createVariable("bias", "f8", ("steps", "N",))
+  biasVals.units = "dimensionless energy" 
+
+  return outDat, steps, U, config, biasVals
+
+
+#Should add command line option for saving to file, but instead adding flag here
+write_traj = True
+
+if write_traj:
+  outDat, steps_nc, U_nc, config_nc, biasVals_nc = createDataFile('LG_2D_traj.nc', 28)
+
 #Get system type
 system_type = sys.argv[1]
 
@@ -53,27 +98,33 @@ print("Loaded data from files: ", dat_files)
 zDraw = mc_moves.zDrawFunc_wrap_VAE(data, vaeModel)
 
 #Select random configurations as starting points for batch of MC simulations
-rand_inds = np.random.choice(data.shape[0], size=100, replace=False)
+num_parallel = 1000
+rand_inds = np.random.choice(data.shape[0], size=num_parallel, replace=False)
 curr_config = data[rand_inds]
 curr_U = losses.latticeGasHamiltonian(curr_config, **energy_params).numpy()
 
 #Set up statistics
-num_steps = 30000
-num_acc = np.zeros(curr_config.shape[0])
-mc_stats = np.zeros((curr_config.shape[0], num_steps, 8))
-N_traj = np.zeros((curr_config.shape[0], num_steps+1))
-U_traj = np.zeros((curr_config.shape[0], num_steps+1))
+num_steps = 1000
+num_acc = np.zeros(num_parallel)
+mc_stats = np.zeros((num_parallel, num_steps, 8))
+N_traj = np.zeros((num_parallel, num_steps+1))
+U_traj = np.zeros((num_parallel, num_steps+1))
 
 N_traj[:, 0] = np.sum(curr_config, axis=(1, 2, 3))
 U_traj[:, 0] = curr_U
 
+if write_traj:
+  steps_nc[0:num_parallel] = np.arange(num_parallel)
+  U_nc[0:num_parallel] = curr_U
+  config_nc[0:num_parallel, :, :] = curr_config[..., 0]
+
 for i in range(num_steps):
     print('Step %i'%i)
     move_info = mc_moves.moveVAE(curr_config, curr_U,
-                             vaeModel, 1.77, energy_func, zDraw,
+                             vaeModel, beta, energy_func, zDraw,
                              energyParams=energy_params, samplerParams=sampler_params,
                              zDrawType='std_normal', verbose=True)
-    rand_logP = np.log(np.random.random(curr_config.shape[0]))
+    rand_logP = np.log(np.random.random(num_parallel))
     mc_stats[:, i, :] = np.array(move_info[-1]).T
     to_acc = (move_info[0]  > rand_logP)
     num_acc[to_acc.numpy()] += 1.0
@@ -82,11 +133,20 @@ for i in range(num_steps):
     N_traj[:, i+1] = np.sum(curr_config, axis=(1, 2, 3))
     U_traj[:, i+1] = curr_U
 
+    if write_traj:
+      start_ind = (i+1)*num_parallel
+      end_ind = (i+2)*num_parallel
+      steps_nc[start_ind:end_ind] = np.arange(start_ind, end_ind)
+      U_nc[start_ind:end_ind] = curr_U
+      config_nc[start_ind:end_ind, :, :] = curr_config[..., 0]
+
 print("Acceptance rate: ", (num_acc/num_steps))
-print("Total: %f"%(np.sum(num_acc)/(num_steps*curr_config.shape[0])))
+print("Total: %f"%(np.sum(num_acc)/(num_steps*num_parallel)))
 
 np.save('mc_stats', mc_stats)
 np.save('N', N_traj)
 np.save('U', U_traj)
 
+if write_traj:
+  outDat.close()
 
