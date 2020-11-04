@@ -188,12 +188,12 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #Would still like to provide a wrapper in dataloaders.py
   #Will make more generalizable in case data format changes
   #But, something weird with batching happens if you use keras loss functions
-  #trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
+  trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
   #trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
   #                                               dset='all', permute=True)#, center_and_whiten=True)
   #trainData = dataloaders.raw_image_data(data_file)
   #trainData, valData = dataloaders.dsprites_data(batch_size, val_frac=0.01)
-  trainData, valData = dataloaders.ala_dipeptide_data(data_file, batch_size, val_frac=0.05, rigid_bonds=True)
+  #trainData, valData = dataloaders.ala_dipeptide_data(data_file, batch_size, val_frac=0.05, rigid_bonds=True)
   #trainData, valData = dataloaders.polymer_data(data_file, batch_size, val_frac=0.05, rigid_bonds=True)
 
   #Set up path for checkpoint files
@@ -207,15 +207,15 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
                                       )
 
   #Specify the loss function we want to use
-  #loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True,
-  #                                reduction=tf.keras.losses.Reduction.SUM)
+  loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True,
+                                  reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = tf.keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = losses.ReconLoss()
   #loss_fn = losses.diag_gaussian_loss
   #loss_fn = losses.ReconLoss(loss_fn=losses.diag_gaussian_loss, activation=None,
   #                           reduction=tf.keras.losses.Reduction.SUM)
-  loss_fn = losses.AutoregressiveLoss(model.decoder,
-                                      reduction=tf.keras.losses.Reduction.SUM)
+  #loss_fn = losses.AutoregressiveLoss(model.decoder,
+  #                                    reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = losses.AutoConvLoss(model.decoder,
   #                              reduction=tf.keras.losses.Reduction.SUM)
 
@@ -245,6 +245,21 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
       with tf.GradientTape() as tape:
         reconstructed = model(x_batch_train[0], training=True)
         loss = loss_fn(x_batch_train[0], reconstructed) / x_batch_train[0].shape[0]
+
+        #Catchin' NaNs
+        try:
+          tf.debugging.assert_all_finite(reconstructed, 'Reconstruction not ok.')
+        except tf.errors.InvalidArgumentError as e:
+          print('Had NaN or Inf in reconstruction:', reconstructed)
+        try:
+          tf.debugging.assert_all_finite(loss, 'Reconstruction loss not ok.')
+        except tf.errors.InvalidArgumentError as e:
+          print('Had NaN or Inf in recon loss.\nReconstruction:', reconstructed)
+        try:
+          tf.debugging.assert_all_finite(tf.cast(sum(model.losses), 'float32'), 'KL loss not ok.')
+        except tf.errors.InvalidArgumentError as e:
+          print('Had NaN or Inf in KL loss.\nReconstruction:', reconstructed)
+
         loss += sum(model.losses)
         if extraLossFunc is not None:
           extra_loss = tf.cast(extraLossFunc(x_batch_train[0], reconstructed), 'float32')
@@ -254,6 +269,11 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
 
       grads = tape.gradient(loss, model.trainable_weights)
       optimizer.apply_gradients(zip(grads, model.trainable_weights))
+
+      #Catch us some NaNs
+      tf.debugging.assert_all_finite(loss, 'Total loss not ok.')
+      for g in grads:
+        tf.debugging.assert_all_finite(g, 'Grads not ok.')
 
       if step%100 == 0:
         print('\tStep %i: loss=%f, model_loss=%f, kl_div=%f, reg_loss=%f, extra_loss=%f'
