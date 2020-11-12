@@ -1,8 +1,10 @@
 
 import sys
+import time
 
 import numpy as np
 import tensorflow as tf
+from netCDF4 import Dataset
 
 from libVAE import dataloaders, losses, vae, mc_moves
 
@@ -117,6 +119,9 @@ if write_traj:
   steps_nc[0:num_parallel] = np.arange(num_parallel)
   U_nc[0:num_parallel] = curr_U
   config_nc[0:num_parallel, :, :] = curr_config[..., 0]
+  #For next write, increase range to write over by num_parallel
+  start_ind = num_parallel
+  end_ind = 2*num_parallel
 
 for i in range(num_steps):
     print('Step %i'%i)
@@ -134,11 +139,12 @@ for i in range(num_steps):
     U_traj[:, i+1] = curr_U
 
     if write_traj:
-      start_ind = (i+1)*num_parallel
-      end_ind = (i+2)*num_parallel
-      steps_nc[start_ind:end_ind] = np.arange(start_ind, end_ind)
-      U_nc[start_ind:end_ind] = curr_U
-      config_nc[start_ind:end_ind, :, :] = curr_config[..., 0]
+      if (i+1)%5 == 0:
+        steps_nc[start_ind:end_ind] = np.arange(start_ind, end_ind)
+        U_nc[start_ind:end_ind] = curr_U
+        config_nc[start_ind:end_ind, :, :] = curr_config[..., 0]
+        start_ind += num_parallel
+        end_ind += num_parallel
 
 print("Acceptance rate: ", (num_acc/num_steps))
 print("Total: %f"%(np.sum(num_acc)/(num_steps*num_parallel)))
