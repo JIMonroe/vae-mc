@@ -529,7 +529,7 @@ transformations with similar cost and should work much better with 1D flows.
   def _bin_positions(self, x):
     x = tf.reshape(x, [x.shape[0], -1, self.num_bins])
     out = tf.math.softmax(x, axis=-1)
-    out *= (self.bin_max - self.bin_min - self.num_bins*1e-2) + 1e-2
+    out = out*(self.bin_max - self.bin_min - self.num_bins*1e-2) + 1e-2
     return out
 
   def _slopes(self, x):
