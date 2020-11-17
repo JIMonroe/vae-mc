@@ -14,7 +14,6 @@ import tensorflow as tf
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 tf.get_logger().setLevel('ERROR')
 
-
 def compileModel(model):
   """Compiles a model with a defined optimizer and loss function.
   """
@@ -159,6 +158,11 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
     anneal_beta_val: Final value for beta (changes with each epoch, starts with what model is at)
   """
 
+  # #Set up logging of debug info
+  # tf.debugging.experimental.enable_dump_debug_info("/tmp/tfdb2_logdir",
+  #                                                  tensor_debug_mode="FULL_HEALTH",
+  #                                                  circular_buffer_size=10000)
+
   #Check if the directory exists
   #If so, assume continuation and load model weights
   if os.path.isdir(save_dir):
@@ -272,8 +276,12 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
 
       #Catch us some NaNs
       tf.debugging.assert_all_finite(loss, 'Total loss not ok.')
-      for g in grads:
-        tf.debugging.assert_all_finite(g, 'Grads not ok.')
+      for k, g in enumerate(grads):
+        try:
+          tf.debugging.assert_all_finite(g, 'Grads not ok.')
+        except:
+          print('Had NaN or Inf in gradients.\nReconstructed:', reconstructed)
+          print(g, model.trainable_weights[k])
 
       if step%100 == 0:
         print('\tStep %i: loss=%f, model_loss=%f, kl_div=%f, reg_loss=%f, extra_loss=%f'
