@@ -6,7 +6,7 @@ import numpy as np
 import tensorflow as tf
 from netCDF4 import Dataset
 
-from libVAE import dataloaders, losses, vae, mc_moves
+from libVAE import dataloaders, losses, vae, mc_moves, mc_moves_LG
 
 
 #Define function to save trajectory if we want to
@@ -105,9 +105,17 @@ rand_inds = np.random.choice(data.shape[0], size=num_parallel, replace=False)
 curr_config = data[rand_inds]
 curr_U = losses.latticeGasHamiltonian(curr_config, **energy_params).numpy()
 
+#Allow for multiple types of MC moves
+move_types = [mc_moves.moveVAE, #mc_moves.moveVAEbiased
+              mc_moves_LG.moveTranslate,
+              mc_moves_LG.moveDeleteMulti,
+              mc_moves_LG.moveInsertMulti]
+move_probs = [0.25, 0.25, 0.25, 0.25] #[1.0, 0.0, 0.0, 0.0]
+
 #Set up statistics
 num_steps = 1000
-num_acc = np.zeros(num_parallel)
+move_counts = np.zeros((num_parallel, len(move_types)))
+num_acc = np.zeros((num_parallel, len(move_types)))
 mc_stats = np.zeros((num_parallel, num_steps, 8)) #8 if unbiased, 10 if biased
 N_traj = np.zeros((num_parallel, num_steps+1))
 U_traj = np.zeros((num_parallel, num_steps+1))
@@ -125,20 +133,22 @@ if write_traj:
 
 for i in range(num_steps):
     print('Step %i'%i)
-    move_info = mc_moves.moveVAE(curr_config, curr_U,
-                              vaeModel, beta, energy_func, zDraw,
-                              energyParams=energy_params, samplerParams=sampler_params,
-                              zDrawType='std_normal', verbose=True)
-#     move_info = mc_moves.moveVAEbiased(curr_config, curr_U,
-#                              vaeModel, beta, energy_func, zDraw,
-#                              energyParams=energy_params, samplerParams=sampler_params,
-#                              zDrawType='std_normal', verbose=True)
+    #Pick move type
+    m = np.random.choice(np.arange(len(move_types)), p=move_probs)
+    move_counts[:, m] += 1
+    if m == 0:
+        move_info = move_types[m](curr_config, curr_U,
+                                  vaeModel, beta, energy_func, zDraw,
+                                  energyParams=energy_params, samplerParams=sampler_params,
+                                  zDrawType='std_normal', verbose=True)
+        mc_stats[:, i, :] = np.array(move_info[-1]).T
+    else:
+        move_info = move_types[m](curr_config, curr_U, beta)
     rand_logP = np.log(np.random.random(num_parallel))
-    mc_stats[:, i, :] = np.array(move_info[-1]).T
-    to_acc = (move_info[0]  > rand_logP)
-    num_acc[to_acc.numpy()] += 1.0
-    curr_config[to_acc.numpy()] = move_info[1][to_acc]
-    curr_U[to_acc.numpy()] = move_info[2][to_acc].numpy()
+    to_acc = (move_info[0]  > rand_logP).numpy()
+    num_acc[to_acc, m] += 1.0
+    curr_config[to_acc] = move_info[1][to_acc]
+    curr_U[to_acc] = move_info[2][to_acc]
     N_traj[:, i+1] = np.sum(curr_config, axis=(1, 2, 3))
     U_traj[:, i+1] = curr_U
 
@@ -150,8 +160,10 @@ for i in range(num_steps):
         start_ind += num_parallel
         end_ind += num_parallel
 
-print("Acceptance rate: ", (num_acc/num_steps))
-print("Total: %f"%(np.sum(num_acc)/(num_steps*num_parallel)))
+print("Acceptance rates: ")
+for i in range(len(move_types)):
+    print("Move type %i"%i, (num_acc[:, i]/move_counts[:, i]))
+    print("Total: %f"%(np.sum(num_acc[:, i])/(np.sum(move_counts[:, i]))))
 
 np.save('mc_stats', mc_stats)
 np.save('N', N_traj)
