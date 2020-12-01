@@ -108,7 +108,7 @@ curr_U = losses.latticeGasHamiltonian(curr_config, **energy_params).numpy()
 #Set up statistics
 num_steps = 1000
 num_acc = np.zeros(num_parallel)
-mc_stats = np.zeros((num_parallel, num_steps, 8))
+mc_stats = np.zeros((num_parallel, num_steps, 8)) #8 if unbiased, 10 if biased
 N_traj = np.zeros((num_parallel, num_steps+1))
 U_traj = np.zeros((num_parallel, num_steps+1))
 
@@ -126,9 +126,13 @@ if write_traj:
 for i in range(num_steps):
     print('Step %i'%i)
     move_info = mc_moves.moveVAE(curr_config, curr_U,
-                             vaeModel, beta, energy_func, zDraw,
-                             energyParams=energy_params, samplerParams=sampler_params,
-                             zDrawType='std_normal', verbose=True)
+                              vaeModel, beta, energy_func, zDraw,
+                              energyParams=energy_params, samplerParams=sampler_params,
+                              zDrawType='std_normal', verbose=True)
+#     move_info = mc_moves.moveVAEbiased(curr_config, curr_U,
+#                              vaeModel, beta, energy_func, zDraw,
+#                              energyParams=energy_params, samplerParams=sampler_params,
+#                              zDrawType='std_normal', verbose=True)
     rand_logP = np.log(np.random.random(num_parallel))
     mc_stats[:, i, :] = np.array(move_info[-1]).T
     to_acc = (move_info[0]  > rand_logP)

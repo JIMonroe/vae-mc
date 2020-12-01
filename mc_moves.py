@@ -41,8 +41,8 @@ def zDrawUniform(minZ, maxZ, zSel=None, nDraws=1, batch_size=1):
   else:
     zval = tf.random.uniform((nDraws*batch_size, minZ.shape[0]),
                              minval=minZ, maxval=maxZ)
-  zlogprob = tf.math.reduce_sum(-tf.math.log(maxZ - minZ)).numpy()
-  zlogprob = zlogprob*tf.ones(nDraws).numpy()
+  zlogprob = tf.reduce_sum(-tf.math.log(maxZ - minZ))
+  zlogprob = (zlogprob*tf.ones(nDraws*batch_size)).numpy()
   return zval, zlogprob
 
 
@@ -285,7 +285,7 @@ called with different styles of draws for z.
     return logPacc, newConfig, newU
 
 
-def vaeBias(vae_model, x, nSample=1000):
+def vaeBias(vae_model, x, nSample=200):
   """Biasing function in full-space coordinates to ensure flat sampling along latent-space.
   This requires averaging P(z) over P(z|x) and inverting to obtain the bias. Will return
   the log of the average P(z), so the negated free energy along z associated with x. This bias
