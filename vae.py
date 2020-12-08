@@ -460,6 +460,7 @@ between the two, 'system_type' should either be 'dimer' or 'lg'.
                autoregress=False,
                num_latent=1, name='cgmodel', beta=1.0,
                use_skips=True,
+               cg_map_info=None,
                **kwargs):
     super(CGModel, self).__init__(name=name, **kwargs)
     self.data_shape = data_shape
@@ -468,6 +469,7 @@ between the two, 'system_type' should either be 'dimer' or 'lg'.
     self.num_latent = num_latent
     self.beta = beta
     self.use_skips = use_skips
+    self.cg_map_info = cg_map_info
     if self.system == 'dimer':
       self.encoder = architectures.DimerCGMapping()
       if self.autoregress:
@@ -475,7 +477,10 @@ between the two, 'system_type' should either be 'dimer' or 'lg'.
       else:
         self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
     elif self.system == 'lg':
-      self.encoder = architectures.LatticeGasCGMapping()
+      if self.cg_map_info is None:
+        self.encoder = architectures.LatticeGasCGMapping()
+      else:
+        self.encoder = architectures.LatticeGasCGReduceMap(**cg_map_info)
       if self.autoregress:
         self.decoder = architectures.AutoregressiveDecoder(self.data_shape, skip_connections=self.use_skips)
       else:
@@ -489,14 +494,12 @@ between the two, 'system_type' should either be 'dimer' or 'lg'.
     self.flow = architectures.NormFlowRQSplineRealNVP(self.num_latent,
                                                       kernel_initializer='truncated_normal',
                                                       rqs_params=flow_net_params)
+    #If have encoder that doesn't go to 1D, need to flatten encoding
+    self.flatten = tf.keras.layers.Flatten()
 
   def call(self, inputs, training=False):
     z = self.encoder(inputs)
-    #With flow only on prior, z passes directly through
-    if self.autoregress and training:
-      reconstructed = self.decoder(z, train_data=inputs)
-    else:
-      reconstructed = self.decoder(z)
+    z = self.flatten(z)
     #In this model, no KL divergence, but still want to maximize likelihood of P(z)
     #Here we define P(z) as a flow over a standard normal prior
     #So pass z through reverse flow to estimate likelihood
@@ -513,6 +516,18 @@ between the two, 'system_type' should either be 'dimer' or 'lg'.
       logp_z -= tf.reduce_mean(logdet)
     else:
       logp_z = 0.0
+    #Unlike with Srel model, want to model distribution of CG-space PARAMETERS with flow
+    #That's why did flow first...
+    #So should turn off sampling in reduction encoder so can manually sample here
+    #If don't, sampling is just redundant (will return same configuration)
+    #But only do if CG mapping is for lattice gas grid-size reduction
+    if self.system == 'lg' and self.num_latent > 1:
+      z = tf.cast((z > tf.random.uniform(z.shape)), dtype='float32')
+    #With flow only on prior, z passes directly through
+    if self.autoregress and training:
+      reconstructed = self.decoder(z, train_data=inputs)
+    else:
+      reconstructed = self.decoder(z)
     reg_loss = self.beta*logp_z
     #Add losses within here - keeps code cleaner and less confusing
     self.add_loss(reg_loss)
@@ -581,8 +596,7 @@ encoding to average density. If do specify dictionary have the following options
     #Only want to sample from CG ensemble if generating new configurations
     #And for any VAE class in this module, that happens outside the class
     #So get right on with decoding
-    if len(z.shape) > 2:
-      z = self.flatten(z)
+    z = self.flatten(z)
     if self.autoregress and training:
       reconstructed = self.decoder(z, train_data=inputs)
     else:
