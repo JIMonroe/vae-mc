@@ -570,6 +570,8 @@ encoding to average density. If do specify dictionary have the following options
     else:
       raise ValueError("System type of %s not understood."%self.system
                        +"\nMust be dimer or lg")
+    #If have encoder that doesn't go to 1D, need to flatten encoding
+    self.flatten = tf.keras.layers.Flatten()
 
   def call(self, inputs, training=False):
     z = self.encoder(inputs)
@@ -579,6 +581,8 @@ encoding to average density. If do specify dictionary have the following options
     #Only want to sample from CG ensemble if generating new configurations
     #And for any VAE class in this module, that happens outside the class
     #So get right on with decoding
+    if len(z.shape) > 2:
+      self.flatten(z)
     if self.autoregress and training:
       reconstructed = self.decoder(z, train_data=inputs)
     else:
