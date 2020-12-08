@@ -227,16 +227,16 @@ are provided (first dimension is not 1) then one x configuration is returned for
       vae_output = vae_output[0]
   else:
     if isinstance(vae_output, (tuple, list)):
-      xConf = sampler_func(*vae_output).numpy()
+      xConf = sampler_func(*vae_output)
     else:
-      xConf = sampler_func(vae_output).numpy()
+      xConf = sampler_func(vae_output)
 
   #Calculate log probability of configuration given VAE output parameters...
   #Turns out this is the same as the NEGATIVE reconstruction loss function
   #Maximizing logP, so minimizing -logP as loss
   xlogprob = -logp_func(xConf, vae_output).numpy()
 
-  return xConf, xlogprob
+  return xConf.numpy(), xlogprob
 
 
 def moveVAE(currConfig, currU, vaeModel, B, energyFunc, zDrawFunc, energyParams={}, samplerParams={}, zDrawType='direct', verbose=False):
@@ -255,7 +255,7 @@ called with different styles of draws for z.
   z2LogProb = np.squeeze(z2LogProb, axis=0)
   #Now draw new configuration based on new z
   newConfig, logProbX2 = xDrawSimple(vaeModel, newZ, **samplerParams)
-  newU = energyFunc(newConfig, **energyParams)
+  newU = energyFunc(newConfig, **energyParams).numpy()
 
   #Retrace steps in reverse direction
   #Calculate probability of drawing newZ from P(z|x2)
@@ -331,8 +331,8 @@ to use uniform z-sampling with this scheme, but will need to test.
   logPacc = move_info[0]
   newConfig = move_info[1]
   newU = move_info[2]
-  bias_curr = vaeBias(vaeModel, currConfig)
-  bias_new = vaeBias(vaeModel, newConfig)
+  bias_curr = vaeBias(vaeModel, currConfig).numpy()
+  bias_new = vaeBias(vaeModel, newConfig).numpy()
   logPacc = logPacc + (bias_new - bias_curr)
   if verbose:
     full_info = move_info[3]

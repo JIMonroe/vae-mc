@@ -110,7 +110,7 @@ move_types = [mc_moves.moveVAE, #mc_moves.moveVAEbiased
               mc_moves_LG.moveTranslate,
               mc_moves_LG.moveDeleteMulti,
               mc_moves_LG.moveInsertMulti]
-move_probs = [0.25, 0.25, 0.25, 0.25] #[1.0, 0.0, 0.0, 0.0]
+move_probs = [1.0, 0.0, 0.0, 0.0]
 
 #Set up statistics
 num_steps = 1000
@@ -135,6 +135,7 @@ for i in range(num_steps):
     print('Step %i'%i)
     #Pick move type
     m = np.random.choice(np.arange(len(move_types)), p=move_probs)
+    print('\tMove type %i'%m)
     move_counts[:, m] += 1
     if m == 0:
         move_info = move_types[m](curr_config, curr_U,
@@ -145,7 +146,7 @@ for i in range(num_steps):
     else:
         move_info = move_types[m](curr_config, curr_U, beta)
     rand_logP = np.log(np.random.random(num_parallel))
-    to_acc = (move_info[0]  > rand_logP).numpy()
+    to_acc = (move_info[0]  > rand_logP)
     num_acc[to_acc, m] += 1.0
     curr_config[to_acc] = move_info[1][to_acc]
     curr_U[to_acc] = move_info[2][to_acc]
@@ -164,6 +165,8 @@ print("Acceptance rates: ")
 for i in range(len(move_types)):
     print("Move type %i"%i, (num_acc[:, i]/move_counts[:, i]))
     print("Total: %f"%(np.sum(num_acc[:, i])/(np.sum(move_counts[:, i]))))
+print("Move statistics: ")
+print(np.sum(move_counts, axis=0))
 
 np.save('mc_stats', mc_stats)
 np.save('N', N_traj)

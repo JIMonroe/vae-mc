@@ -106,7 +106,7 @@ def moveDeleteMulti(currConfig, currU, B, mu=-2.0, eps=-1.0):
   logPacc[np.logical_not(batch_to_remove)] = -np.inf
   #Otherwise, add appropriate term for selecting indices
   logPacc[batch_to_remove] += tf.reduce_sum(tf.math.log(tf.ragged.range(num_oc[batch_to_remove]-remove_num, num_oc[batch_to_remove], dtype=tf.float32)+1), axis=1).numpy()
-  logPacc[batch_to_remove] -= tf.reduce_sum(tf.math.log(tf.ragged.range(num_un[batch_to_remove], num_un[batch_to_remove]-remove_num, dtype=tf.float32)+1), axis=1).numpy()
+  logPacc[batch_to_remove] -= tf.reduce_sum(tf.math.log(tf.ragged.range(num_un[batch_to_remove], num_un[batch_to_remove]+remove_num, dtype=tf.float32)+1), axis=1).numpy()
 
   return logPacc, newConfig, newU
 
