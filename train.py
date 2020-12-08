@@ -815,8 +815,7 @@ def trainSrelCG(model,
     #Iterate over batches in the dataset
     for step, x_batch_train in enumerate(trainData):
       z = model.encoder(x_batch_train[0]).numpy()
-      grads = losses.SrelLossGrad(np.squeeze(z, axis=-1), model.Ucg,
-                                  mc_noise=0.1, beta=mc_beta)
+      grads = losses.SrelLossGrad(np.squeeze(z, axis=-1), model.Ucg, beta=mc_beta)
       optimizer.apply_gradients(zip([grads], model.Ucg.trainable_weights))
 
       if step%100 == 0:
@@ -831,8 +830,7 @@ def trainSrelCG(model,
     batchCount = 0.0
     for x_batch_val in valData:
       z = model.encoder(x_batch_val[0]).numpy()
-      val_grad += np.max(losses.SrelLossGrad(np.squeeze(z, axis=-1), model.Ucg,
-                                             mc_noise=0.1, beta=mc_beta))
+      val_grad += np.max(losses.SrelLossGrad(np.squeeze(z, axis=-1), model.Ucg, beta=mc_beta))
       batchCount += 1.0
     val_grad /= batchCount
     print('\tValidation max_gradient=%f'%val_grad)

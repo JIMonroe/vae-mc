@@ -9,7 +9,9 @@ import tensorflow as tf
 from libVAE import losses
 
 
-def moveTranslate(currConfig, currU, B, mu=-2.0, eps=-1.0):
+def moveTranslate(currConfig, currU, B,
+                  energy_func=losses.latticeGasHamiltonian,
+                  energy_params={'mu':-2.0, 'eps':-1.0}):
   """Takes one particle and translates it to another random position.
      Computes the acceptance probability and returns it with the new
      configuration and potential energy.
@@ -50,7 +52,7 @@ def moveTranslate(currConfig, currU, B, mu=-2.0, eps=-1.0):
   newConfig = np.reshape(newConfig, currConfig.shape)
 
   #Get new potential energy and compute acceptance probabilities
-  newU = losses.latticeGasHamiltonian(newConfig, mu=mu, eps=eps).numpy()
+  newU = energy_func(newConfig, **energy_params).numpy()
   dU = newU - currU
   logPacc = -B*dU
   logPacc[batch_empty] = -np.inf
@@ -59,7 +61,9 @@ def moveTranslate(currConfig, currU, B, mu=-2.0, eps=-1.0):
   return logPacc, newConfig, newU
 
 
-def moveDeleteMulti(currConfig, currU, B, mu=-2.0, eps=-1.0):
+def moveDeleteMulti(currConfig, currU, B,
+                    energy_func=losses.latticeGasHamiltonian,
+                    energy_params={'mu':-2.0, 'eps':-1.0}):
   """Takes a random number of particles and tries to delete.
      Returns the acceptance probability and new configuration and potential energy.
   """
@@ -100,7 +104,7 @@ def moveDeleteMulti(currConfig, currU, B, mu=-2.0, eps=-1.0):
   remove_num = np.array(remove_num)
 
   #Get potential energy and calculate acceptance probabilities
-  newU = losses.latticeGasHamiltonian(newConfig, mu=mu, eps=eps).numpy()
+  newU = energy_func(newConfig, **energy_params).numpy()
   logPacc = -B*(newU-currU)
   #If have no particles to delete, automatically reject
   logPacc[np.logical_not(batch_to_remove)] = -np.inf
@@ -111,7 +115,9 @@ def moveDeleteMulti(currConfig, currU, B, mu=-2.0, eps=-1.0):
   return logPacc, newConfig, newU
 
 
-def moveInsertMulti(currConfig, currU, B, mu=-2.0, eps=-1.0):
+def moveInsertMulti(currConfig, currU, B,
+                    energy_func=losses.latticeGasHamiltonian,
+                    energy_params={'mu':-2.0, 'eps':-1.0}):
   """Takes a random number of particles and tries to delete.
      Returns the acceptance probability and new configuration and potential energy.
   """
@@ -152,7 +158,7 @@ def moveInsertMulti(currConfig, currU, B, mu=-2.0, eps=-1.0):
   insert_num = np.array(insert_num)
 
   #Get potential energy and calculate acceptance probabilities
-  newU = losses.latticeGasHamiltonian(newConfig, mu=mu, eps=eps).numpy()
+  newU = energy_func(newConfig, **energy_params).numpy()
   logPacc = -B*(newU-currU)
   #If have no particles to insert, automatically reject
   logPacc[np.logical_not(batch_to_insert)] = -np.inf

@@ -829,19 +829,30 @@ adjustable tensorflow variables.
 
   def __init__(self, name='lg_u', beta=1.0, **kwargs):
     super(ReducedLGPotential, self).__init__(name=name, **kwargs)
-    self.mu = self.add_weight(name='mu', trainable=True)
-    self.eps = self.add_weight(name='eps', trainable=True)
+    #To make work more easily with spline-based code, have single vector of parameters
+    #Less readable, but stating here that first position is mu, second is epsilon
+    self.coeffs = self.add_weight(name='mu_eps', shape=(2,), trainable=True)
     self.beta = beta
 
   def call(self, x):
     #Shift all indices by 1 in up and down then left and right and multiply by original
-    ud = eps*x*tf.roll(x, 1, axis=1)
-    lr = eps*x*tf.roll(x, 1, axis=2)
+    ud = self.coeffs[1]*x*tf.roll(x, 1, axis=1)
+    lr = self.coeffs[1]*x*tf.roll(x, 1, axis=2)
     #Next incorporate chemical potential term
-    chempot = self.mu*x
+    chempot = self.coeffs[0]*x
     #And sum everything up
     H = tf.reduce_sum(ud + lr - chempot, axis=np.arange(1, len(x.shape)))
     return self.beta*H
+
+  def get_coeff_derivs(self, x):
+    """Hard-coding of derivatives for Srel optimization. Note that returns derivative for
+each input point. Tensorflow could take its own derivatives, but following what was done
+for spline potential, where tensorflow cannot compute derivatives itself.
+    """
+    mu_deriv = -tf.reduce_sum(x, axis=np.arange(1, len(x.shape)))
+    eps_deriv = tf.reduce_sum(x*tf.roll(x, 1, axis=1) + x*tf.roll(x, 1, axis=2),
+                              axis=np.arange(1, len(x.shape)))
+    return tf.stack([mu_deriv, eps_deriv], axis=1).numpy()
 
 
 class MaskedNet(tf.keras.layers.Layer):
