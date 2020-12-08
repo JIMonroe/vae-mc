@@ -831,6 +831,7 @@ adjustable tensorflow variables.
     super(ReducedLGPotential, self).__init__(name=name, **kwargs)
     self.mu = self.add_weight(name='mu', trainable=True)
     self.eps = self.add_weight(name='eps', trainable=True)
+    self.beta = beta
 
   def call(self, x):
     #Shift all indices by 1 in up and down then left and right and multiply by original
@@ -840,7 +841,7 @@ adjustable tensorflow variables.
     chempot = self.mu*x
     #And sum everything up
     H = tf.reduce_sum(ud + lr - chempot, axis=np.arange(1, len(x.shape)))
-    return H
+    return self.beta*H
 
 
 class MaskedNet(tf.keras.layers.Layer):

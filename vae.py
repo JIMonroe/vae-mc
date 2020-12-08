@@ -528,12 +528,18 @@ its potential energy function, which is modelled by cubic B-splines. This requir
 a separate optimization be performed for the decoder and the prior, as the parameters
 and respective loss functions are not coupled in any way. Can choose between a dimer or
 lattice gas system as 'dimer' or 'lg' input to the 'system_type' argument.
+
+For the lattice gas, can also choose a different mapping, specifically a reduction
+in the number of sites. By default this cg_map_info is None, in which case will stick to
+encoding to average density. If do specify dictionary have the following options
+{n_group:4, sample:True, sample_stochastic:True}.
   """
 
   def __init__(self, data_shape, system_type,
                autoregress=False,
                num_latent=1, name='srelmodel', beta=1.0,
                use_skips=True,
+               cg_map_info=None,
                **kwargs):
     super(SrelModel, self).__init__(name=name, **kwargs)
     self.data_shape = data_shape
@@ -542,6 +548,7 @@ lattice gas system as 'dimer' or 'lg' input to the 'system_type' argument.
     self.num_latent = num_latent
     self.beta = beta
     self.use_skips = use_skips
+    self.cg_map_info = cg_map_info
     if self.system == 'dimer':
       self.encoder = architectures.DimerCGMapping()
       self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.8, 2.2, 40))
@@ -550,8 +557,12 @@ lattice gas system as 'dimer' or 'lg' input to the 'system_type' argument.
       else:
         self.decoder = architectures.FCDecoder(self.data_shape, return_vars=True)
     elif self.system == 'lg':
-      self.encoder = architectures.LatticeGasCGMapping()
-      self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.0, 1.0, 40))
+      if self.cg_map_info is None:
+        self.encoder = architectures.LatticeGasCGMapping()
+        self.Ucg = architectures.SplinePotential(knot_points=np.linspace(0.0, 1.0, 40))
+      else:
+        self.encoder = architectures.LatticeGasCGReduceMap(**cg_map_info)
+        self.Ucg = architectures.ReducedLGPotential()
       if self.autoregress:
         self.decoder = architectures.AutoregressiveDecoder(self.data_shape, skip_connections=self.use_skips)
       else:
