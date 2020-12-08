@@ -787,6 +787,62 @@ number of coefficients.
     return self.beta*coeff_derivs
 
 
+class LatticeGasCGReduceMap(tf.keras.layers.Layer):
+  """Deterministic OR stochastic mapping of lattice gas to smaller lattice. Specify the
+number of sites to group as n_group, which should divide the larger lattice into an integer
+number of new sites. For deterministic maps, have two options: average the sites and assign
+this non-integer value, or average the sites and assign 0 if < 0.5 or 1 if > 0.5. Can also
+look at latter as type of deterministic "sampling," so use sample_stochastic to switch
+between this and drawing from a Bernoulli distribution based on the average.
+  """
+
+  def __init__(self, name='encoder',
+               n_group= 4,
+               sample=True, sample_stochastic=True,
+               **kwargs):
+    super(LatticeGasCGReduceMap, self).__init__(name=name, **kwargs)
+    self.n_group = n_group
+    self.sample = sample
+    self.sample_stochastic = sample_stochastic
+
+  def call(self, x_input):
+    #Do pooled averaging over sites
+    #If not an integer, pads as evenly as possible on both sides
+    #Padded values do not contribute to the average, though
+    pooled_x = tf.nn.avg_pool(x_input, (self.n_group, self.n_group),
+                              (self.n_group, self.n_group), 'SAME')
+    if self.sample:
+      if self.sample_stochastic:
+        rand_vals = tf.random.uniform(pooled_x.shape)
+      else:
+        rand_vals = 0.5
+      out = tf.cast((pooled_x > rand_vals), dtype='float32')
+    else:
+      out = pooled_x
+    return out
+
+
+class ReducedLGPotential(tf.keras.layers.Layer):
+  """Reproduces the lattice gas Hamiltonian in losses, but makes mu and epsilon
+adjustable tensorflow variables.
+  """
+
+  def __init__(self, name='lg_u', beta=1.0, **kwargs):
+    super(ReducedLGPotential, self).__init__(name=name, **kwargs)
+    self.mu = self.add_weight(name='mu', trainable=True)
+    self.eps = self.add_weight(name='eps', trainable=True)
+
+  def call(self, x):
+    #Shift all indices by 1 in up and down then left and right and multiply by original
+    ud = eps*x*tf.roll(x, 1, axis=1)
+    lr = eps*x*tf.roll(x, 1, axis=2)
+    #Next incorporate chemical potential term
+    chempot = self.mu*x
+    #And sum everything up
+    H = tf.reduce_sum(ud + lr - chempot, axis=np.arange(1, len(x.shape)))
+    return H
+
+
 class MaskedNet(tf.keras.layers.Layer):
   """Dense neural network with connections controlled by a mask, which allows for creation
 of autoregressive networks if the mask is properly designed. This is based on the code for
