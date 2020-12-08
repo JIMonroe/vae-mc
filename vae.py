@@ -582,7 +582,7 @@ encoding to average density. If do specify dictionary have the following options
     #And for any VAE class in this module, that happens outside the class
     #So get right on with decoding
     if len(z.shape) > 2:
-      self.flatten(z)
+      z = self.flatten(z)
     if self.autoregress and training:
       reconstructed = self.decoder(z, train_data=inputs)
     else:
