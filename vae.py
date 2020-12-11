@@ -657,7 +657,7 @@ Currently only intended for use with a lattice gas system based on the chosen ma
     #Here we define P(z) with an autoregressive model
     if self.beta != 0.0:
       #Estimate (negative) log likelihood of the prior
-      logp_z = tf.reduce_mean(self.prior(z.shape[0], train_data=z))
+      logp_z = -tf.reduce_mean(self.prior(z.shape[0], train_data=z))
     else:
       logp_z = 0.0
     #With flow only on prior, z passes directly through
