@@ -615,3 +615,62 @@ encoding to average density. If do specify dictionary have the following options
     return reconstructed
 
 
+class CGModel_AutoPrior(tf.keras.Model):
+  """A special case of a VAE with a fixed mapping for the encoder and a flexible decoder
+to invert the mapping. Instead of a flow, however, an autoregressive distribution for the
+prior is learned, which can be used to generate new latent-space samples. As such, this
+only makes sense if have multiple dimensions for num_latent, so only use it in such cases.
+prior_params can be a dictionary of inputs to an AutoregressivePrior class.
+Currently only intended for use with a lattice gas system based on the chosen mapping.
+  """
+
+  def __init__(self, data_shape,
+               autoregress=False,
+               num_latent=1, name='cgmodel', beta=1.0,
+               use_skips=True,
+               cg_map_info={'n_group':4, 'sample':True, 'sample_stochastic':True},
+               prior_params={'return_vars':False},
+               **kwargs):
+    super(CGModel_AutoPrior, self).__init__(name=name, **kwargs)
+    self.data_shape = data_shape
+    self.autoregress = autoregress
+    self.num_latent = num_latent
+    self.beta = beta
+    self.use_skips = use_skips
+    self.cg_map_info = cg_map_info
+    self.prior_params = prior_params
+    #Set up encoder
+    self.encoder = architectures.LatticeGasCGReduceMap(**cg_map_info)
+    if self.autoregress:
+      self.decoder = architectures.AutoregressiveDecoder(self.data_shape, skip_connections=self.use_skips)
+    else:
+      self.decoder = architectures.FCDecoder(self.data_shape)
+    #Set up autoregressive prior rather than flow
+    latent_shape = tuple(np.ceil(np.array(self.data_shape)/4.0).astype(np.int32))
+    self.prior = architectures.AutoregressivePrior(latent_shape, **prior_params)
+    #If have encoder that doesn't go to 1D, need to flatten encoding
+    self.flatten = tf.keras.layers.Flatten()
+
+  def call(self, inputs, training=False):
+    z = self.encoder(inputs)
+    #In this model, no KL divergence, but still want to maximize likelihood of P(z)
+    #Here we define P(z) with an autoregressive model
+    if self.beta != 0.0:
+      #Estimate (negative) log likelihood of the prior
+      logp_z = tf.reduce_mean(self.prior(z.shape[0], train_data=z))
+    else:
+      logp_z = 0.0
+    #With flow only on prior, z passes directly through
+    z = self.flatten(z)
+    if self.autoregress and training:
+      reconstructed = self.decoder(z, train_data=inputs)
+    else:
+      reconstructed = self.decoder(z)
+    reg_loss = self.beta*logp_z
+    #Add losses within here - keeps code cleaner and less confusing
+    self.add_loss(reg_loss)
+    self.add_metric(tf.reduce_mean(logp_z), name='logp_z', aggregation='mean')
+    self.add_metric(tf.reduce_mean(reg_loss), name='regularizer_loss', aggregation='mean')
+    return reconstructed
+
+
