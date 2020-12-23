@@ -30,10 +30,20 @@ def moveTranslate(currConfig, currU, B,
   #Randomly select occupied and unoccupied indices to switch
   this_site = tf.map_fn(fn=tf.random.shuffle,
                         elems=tf.ragged.boolean_mask(site_inds, occupied))
-  this_site = tf.squeeze(this_site[:, :1].to_tensor(default_value=-1))
+  try:
+    this_site = tf.squeeze(this_site[:, :1].to_tensor(default_value=-1), axis=-1)
+  except tf.python.framework.errors_impl.InvalidArgumentError:
+    #If above exception thrown, dimension 1 is 0, so cannot squeeze
+    #In this case, just don't squeeze
+    #Having a zero dimension means there aer no occupied sites
+    #Would create problems when indexing, but will get masked out with batch_to_move
+    this_site = this_site[:, :1].to_tensor(default_value=-1)
   new_site = tf.map_fn(fn=tf.random.shuffle,
                        elems=tf.ragged.boolean_mask(site_inds, unoccupied))
-  new_site = tf.squeeze(new_site[:, :1].to_tensor(default_value=-1))
+  try:
+    new_site = tf.squeeze(new_site[:, :1].to_tensor(default_value=-1), axis=-1)
+  except tf.python.framework.errors_impl.InvalidArgumentError:
+    new_site = new_site[:, :1].to_tensor(default_value=-1)
 
   #If have no particles or vacancies, have zero probability of proposing the move
   #So move will be rejected
