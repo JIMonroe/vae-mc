@@ -543,10 +543,10 @@ def lgmc_moveTranslate(currConfig, currU, B,
   #Randomly select occupied and unoccupied indices to switch
   this_site = tf.map_fn(fn=tf.random.shuffle,
                         elems=tf.ragged.boolean_mask(site_inds, occupied))
-  this_site = tf.squeeze(this_site[:, :1].to_tensor(default_value=-1))
+  this_site = tf.squeeze(this_site[:, :1].to_tensor(default_value=-1), axis=-1)
   new_site = tf.map_fn(fn=tf.random.shuffle,
                        elems=tf.ragged.boolean_mask(site_inds, unoccupied))
-  new_site = tf.squeeze(new_site[:, :1].to_tensor(default_value=-1))
+  new_site = tf.squeeze(new_site[:, :1].to_tensor(default_value=-1), axis=-1)
 
   #If have no particles or vacancies, have zero probability of proposing the move
   #So move will be rejected
