@@ -626,7 +626,7 @@ Currently only intended for use with a lattice gas system based on the chosen ma
 
   def __init__(self, data_shape,
                autoregress=False,
-               num_latent=1, name='cgmodel', beta=1.0,
+               num_latent=1, name='cgmodel_autoprior', beta=1.0,
                use_skips=True,
                cg_map_info={'n_group':4, 'sample':True, 'sample_stochastic':True},
                prior_params={'return_vars':False},

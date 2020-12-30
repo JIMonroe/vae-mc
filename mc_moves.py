@@ -82,7 +82,14 @@ given data so that don't have to redo every MC step. Also need to provide a VAE 
 interpreting the data.
   """
   def __init__(self, dat, vae_model):
-    self.zMeans, self.zLogvars = vae_model.encoder(dat)
+    #Try to use encoder to get means and log-variances
+    try:
+      self.zMeans, self.zLogvars = vae_model.encoder(dat)
+    #If it doesn't work, encoder is deterministic, so set fixed value for log-variances
+    except ValueError:
+      self.zMeans = vae_model.encoder(dat)
+      #Set value close to machine precision for floating point
+      self.zLogvars = tf.fill(self.zMeans.shape, -85.0)
     self.trueMean = tf.reduce_mean(self.zMeans, axis=0)
     self.trueLogVar = tf.math.log(tf.reduce_mean(tf.math.exp(self.zLogvars)
                                                  + tf.square(self.zMeans)
@@ -93,7 +100,7 @@ interpreting the data.
       self.flow = vae_model.flow
     except AttributeError:
       self.flow = None
-    self.prior_flow = ('prior' in vae_model.name)
+    self.prior_flow = (('prior' in vae_model.name) or (vae_model.name == 'cgmodel'))
 
   def __call__(self, draw_type='std_normal', zSel=None, nDraws=1, batch_size=1):
     #First handle batch size - force to match zSel if have zSel
@@ -168,28 +175,42 @@ and calculate its probability given x.
   #Define batch size
   batch_size = x.shape[0]
   #Generate the mean and log variance of the normal distribution for z given x
-  zMean, zLogvar = vae_model.encoder(tf.cast(x, 'float32'))
+  try:
+    zMean, zLogvar = vae_model.encoder(tf.cast(x, 'float32'))
+  #If fails, using deterministic encoder, so set log-vars to value close to machine precision
+  except ValueError:
+    zMean = vae_model.encoder(tf.cast(x, 'float32'))
+    zLogvar = tf.fill(zMean.shape, -85.0)
   if zSel is not None:
     #Must have batch size same as input x
     if zSel.shape[0] != batch_size:
       raise ValueError('Batch size of x is %i and zSel is %i - must match!'
                         %(batch_size, zSel.shape[0]))
     try:
-      if 'prior' not in vae_model.name:
+      if (('prior' not in vae_model.name) and (vae_model.name != 'cgmodel')):
         zSel, sel_log_det_rev = vae_model.flow(zSel, reverse=True)
     except AttributeError:
       pass
     if nDraws == 1:
       zval = zSel
     else:
-      zval = vae_model.sampler(tf.tile(zMean, (nDraws-1,1)), tf.tile(zLogvar, (nDraws-1,1)))
+      #Could use sampler, but no point because only coded for Gaussian
+      #Would be less code, but instead be more clear here
+      #Also makes code work with deterministic encodings
+      # zval = vae_model.sampler(tf.tile(zMean, (nDraws-1,1)), tf.tile(zLogvar, (nDraws-1,1)))
+      zval = tf.random.normal((zMean.shape[0]*(nDraws-1), zMean.shape[1]),
+                              mean=tf.tile(zMean, (nDraws-1,1)),
+                              stddev=tf.tile(tf.exp(0.5*zLogvar), (nDraws-1,1)))
       zval = tf.concat((zSel, zval), 0)
   else:
-    zval = vae_model.sampler(tf.tile(zMean, (nDraws,1)), tf.tile(zLogvar, (nDraws,1)))
+    # zval = vae_model.sampler(tf.tile(zMean, (nDraws,1)), tf.tile(zLogvar, (nDraws,1)))
+    zval = tf.random.normal((zMean.shape[0]*nDraws, zMean.shape[1]),
+                            mean=tf.tile(zMean, (nDraws,1)),
+                            stddev=tf.tile(tf.exp(0.5*zLogvar), (nDraws,1)))
   zlogprob = tf.reduce_sum( -0.5*tf.math.square(zval - zMean)/tf.math.exp(zLogvar)
                             - 0.5*np.log(2.0*np.pi) - 0.5*zLogvar, axis=1).numpy()
   try:
-    if 'prior' not in vae_model.name:
+    if (('prior' not in vae_model.name) and (vae_model.name != 'cgmodel')):
       zval, log_det = vae_model.flow(zval)
       zlogprob -= log_det.numpy()
   except AttributeError:
