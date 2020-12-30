@@ -15,6 +15,7 @@
 """Library of basic reconstruction and ELBO loss functions for VAEs.
 Can also use these functions as metrics in keras models.
 Adapted from disentanglement_lib https://github.com/google-research/disentanglement_lib"""
+import copy
 import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
@@ -519,22 +520,236 @@ energy is returned.
   return cg_confs, cg_energies
 
 
+#The below MC moves replicate code in mc_moves_LG.py only because that code imports losses
+#for latticeGasHamiltonian, but then losses imports that code, so run into issues
+def lgmc_moveTranslate(currConfig, currU, B,
+                      energy_func=latticeGasHamiltonian,
+                      energy_params={'mu':-2.0, 'eps':-1.0}):
+  """Takes one particle and translates it to another random position.
+     Computes the acceptance probability and returns it with the new
+     configuration and potential energy.
+  """
+  #Get batch shape, and flattened indices of lattice sites
+  batch_shape = currConfig.shape[0]
+  site_inds = tf.range(np.prod(currConfig.shape[1:3]))[None, :]
+  site_inds = tf.tile(site_inds, (batch_shape, 1))
+
+  #Find where particles occupy lattice sites - flattened to access indices easier
+  occupied = (currConfig == 1)
+  occupied = tf.reshape(occupied, (batch_shape, np.prod(occupied.shape[1:])))
+  unoccupied = (currConfig == 0)
+  unoccupied = tf.reshape(unoccupied, (batch_shape, np.prod(unoccupied.shape[1:])))
+
+  #Randomly select occupied and unoccupied indices to switch
+  this_site = tf.map_fn(fn=tf.random.shuffle,
+                        elems=tf.ragged.boolean_mask(site_inds, occupied))
+  try:
+    this_site = tf.squeeze(this_site[:, :1].to_tensor(default_value=-1), axis=-1)
+  except tf.python.framework.errors_impl.InvalidArgumentError:
+    #If above exception thrown, dimension 1 is 0, so cannot squeeze
+    #In this case, just don't squeeze
+    #Having a zero dimension means there aer no occupied sites
+    #Would create problems when indexing, but will get masked out with batch_to_move
+    this_site = this_site[:, :1].to_tensor(default_value=-1)
+  new_site = tf.map_fn(fn=tf.random.shuffle,
+                       elems=tf.ragged.boolean_mask(site_inds, unoccupied))
+  try:
+    new_site = tf.squeeze(new_site[:, :1].to_tensor(default_value=-1), axis=-1)
+  except tf.python.framework.errors_impl.InvalidArgumentError:
+    new_site = new_site[:, :1].to_tensor(default_value=-1)
+
+  #If have no particles or vacancies, have zero probability of proposing the move
+  #So move will be rejected
+  batch_empty = (tf.reduce_sum(tf.cast(occupied, tf.int32), axis=1) == 0).numpy()
+  batch_full = (tf.reduce_sum(tf.cast(unoccupied, tf.int32), axis=1) == 0).numpy()
+  batch_to_move = tf.math.logical_and(tf.math.logical_not(batch_empty),
+                                      tf.math.logical_not(batch_full)).numpy()
+
+  #Create new configurations, flattened so can index sites to switch
+  newConfig = np.reshape(copy.deepcopy(currConfig), (-1, np.prod(currConfig.shape[1:])))
+
+  #For occupied sites, set to zero, for unoccupied, set to 1
+  #But only for configurations that are not completely empty or full
+  newConfig[batch_to_move, this_site[batch_to_move]] = 0
+  newConfig[batch_to_move, new_site[batch_to_move]] = 1
+  newConfig = np.reshape(newConfig, currConfig.shape)
+
+  #Get new potential energy and compute acceptance probabilities
+  newU = energy_func(newConfig, **energy_params).numpy()
+  dU = newU - currU
+  logPacc = -B*dU
+  logPacc[batch_empty] = -np.inf
+  logPacc[batch_full] = -np.inf
+
+  return logPacc, newConfig, newU
+
+
+def lgmc_moveDeleteMulti(currConfig, currU, B,
+                        energy_func=latticeGasHamiltonian,
+                        energy_params={'mu':-2.0, 'eps':-1.0}):
+  """Takes a random number of particles and tries to delete.
+     Returns the acceptance probability and new configuration and potential energy.
+  """
+  #Get batch shape, and flattened indices of lattice sites
+  batch_shape = currConfig.shape[0]
+  site_inds = tf.range(np.prod(currConfig.shape[1:3]))[None, :]
+  site_inds = tf.tile(site_inds, (batch_shape, 1))
+
+  #Find where particles occupy lattice sites - flattened to access indices easier
+  occupied = (currConfig == 1)
+  occupied = tf.reshape(occupied, (batch_shape, np.prod(occupied.shape[1:])))
+  unoccupied = (currConfig == 0)
+  unoccupied = tf.reshape(unoccupied, (batch_shape, np.prod(unoccupied.shape[1:])))
+
+  #Need number of occupied and unoccupied
+  num_oc = tf.reduce_sum(tf.cast(occupied, tf.float32), axis=1)
+  num_un = tf.reduce_sum(tf.cast(unoccupied, tf.float32), axis=1)
+
+  #And where batch has configs with at least one particle
+  batch_to_remove = (num_oc > 0).numpy()
+
+  #Randomly select number to delete and indices
+  this_site = tf.map_fn(fn=tf.random.shuffle,
+                        elems=tf.ragged.boolean_mask(site_inds, occupied))
+  remove_lens = tf.math.minimum(this_site.row_lengths(), 20)
+
+  #Cannot find way around looping, so just doing it to remove particles
+  #Create new configurations and remove particles
+  newConfig = np.reshape(copy.deepcopy(currConfig), (-1, np.prod(currConfig.shape[1:])))
+  remove_num = []
+  for i in range(batch_shape):
+    if batch_to_remove[i]:
+      this_remove_num = np.random.randint(1, remove_lens[i]+1)
+      remove_num.append(this_remove_num)
+      newConfig[i, this_site[i, :this_remove_num]] = 0
+
+  newConfig = np.reshape(newConfig, currConfig.shape)
+  remove_num = np.array(remove_num)
+
+  #Get potential energy and calculate acceptance probabilities
+  newU = energy_func(newConfig, **energy_params).numpy()
+  logPacc = -B*(newU-currU)
+  #If have no particles to delete, automatically reject
+  logPacc[np.logical_not(batch_to_remove)] = -np.inf
+  #Otherwise, add appropriate term for selecting indices
+  logPacc[batch_to_remove] += tf.reduce_sum(tf.math.log(tf.ragged.range(num_oc[batch_to_remove]-remove_num, num_oc[batch_to_remove], dtype=tf.float32)+1), axis=1).numpy()
+  logPacc[batch_to_remove] -= tf.reduce_sum(tf.math.log(tf.ragged.range(num_un[batch_to_remove], num_un[batch_to_remove]+remove_num, dtype=tf.float32)+1), axis=1).numpy()
+
+  return logPacc, newConfig, newU
+
+
+def lgmc_moveInsertMulti(currConfig, currU, B,
+                        energy_func=latticeGasHamiltonian,
+                        energy_params={'mu':-2.0, 'eps':-1.0}):
+  """Takes a random number of particles and tries to delete.
+     Returns the acceptance probability and new configuration and potential energy.
+  """
+  #Get batch shape, and flattened indices of lattice sites
+  batch_shape = currConfig.shape[0]
+  site_inds = tf.range(np.prod(currConfig.shape[1:3]))[None, :]
+  site_inds = tf.tile(site_inds, (batch_shape, 1))
+
+  #Find where particles occupy lattice sites - flattened to access indices easier
+  occupied = (currConfig == 1)
+  occupied = tf.reshape(occupied, (batch_shape, np.prod(occupied.shape[1:])))
+  unoccupied = (currConfig == 0)
+  unoccupied = tf.reshape(unoccupied, (batch_shape, np.prod(unoccupied.shape[1:])))
+
+  #Need number of occupied and unoccupied
+  num_oc = tf.reduce_sum(tf.cast(occupied, tf.float32), axis=1)
+  num_un = tf.reduce_sum(tf.cast(unoccupied, tf.float32), axis=1)
+
+  #And where batch has configs with at least one particle
+  batch_to_insert = (num_un > 0).numpy()
+
+  #Randomly select number to insert and indices
+  this_site = tf.map_fn(fn=tf.random.shuffle,
+                        elems=tf.ragged.boolean_mask(site_inds, unoccupied))
+  insert_lens = tf.math.minimum(this_site.row_lengths(), 20)
+
+  #Cannot find way around looping, so just doing it to insert particles
+  #Create new configurations and insert particles
+  newConfig = np.reshape(copy.deepcopy(currConfig), (-1, np.prod(currConfig.shape[1:])))
+  insert_num = []
+  for i in range(batch_shape):
+    if batch_to_insert[i]:
+      this_insert_num = np.random.randint(1, insert_lens[i]+1)
+      insert_num.append(this_insert_num)
+      newConfig[i, this_site[i, :this_insert_num]] = 1
+
+  newConfig = np.reshape(newConfig, currConfig.shape)
+  insert_num = np.array(insert_num)
+
+  #Get potential energy and calculate acceptance probabilities
+  newU = energy_func(newConfig, **energy_params).numpy()
+  logPacc = -B*(newU-currU)
+  #If have no particles to insert, automatically reject
+  logPacc[np.logical_not(batch_to_insert)] = -np.inf
+  #Otherwise, add appropriate term for selecting indices
+  logPacc[batch_to_insert] += tf.reduce_sum(tf.math.log(tf.ragged.range(num_un[batch_to_insert]-insert_num, num_un[batch_to_insert], dtype=tf.float32)+1), axis=1).numpy()
+  logPacc[batch_to_insert] -= tf.reduce_sum(tf.math.log(tf.ragged.range(num_oc[batch_to_insert], num_oc[batch_to_insert]+insert_num, dtype=tf.float32)+1), axis=1).numpy()
+
+  return logPacc, newConfig, newU
+
+
+def sim_reduced_lg_cg(init_conf, energy_func,
+                      num_steps=1, move_probs=[0.5, 0.25, 0.25], beta=1.0):
+  """Simulates specifically in the CG ensemble of a reduced lattice gas model (so just runs
+an MC sim of a lattice gas). The move_probs list specifies probabilities of translation,
+deletion, and insertion, in that order.
+  """
+  cg_confs = copy.deepcopy(init_conf)
+  cg_energies = energy_func(cg_confs)
+  if tf.is_tensor(cg_confs):
+    cg_confs = cg_confs.numpy()
+  if tf.is_tensor(cg_energies):
+    cg_energies = cg_energies.numpy()
+  for step in range(num_steps):
+    move_type = np.random.choice(np.arange(3), p=move_probs)
+    if move_type == 0:
+      mc_move = lgmc_moveTranslate
+    elif move_type == 1:
+      mc_move = lgmc_moveDeleteMulti
+    elif move_type == 2:
+      mc_move = lgmc_moveInsertMulti
+    logP, new_confs, new_energies = mc_move(cg_confs, cg_energies, beta,
+                                            energy_func=energy_func, energy_params={})
+    rand_logP = np.log(np.random.random(logP.shape[0]))
+    to_acc = (logP > rand_logP)
+    cg_confs[to_acc] = new_confs[to_acc]
+    cg_energies[to_acc] = new_energies[to_acc]
+  return cg_confs, cg_energies
+
+
 def SrelLossGrad(confs, cg_pot,
                  cg_confs=None,
-                 num_steps=int(1e3), mc_noise=1.0, beta=1.0):
+                 mc_sim=None,
+                 mc_params={},
+                 beta=1.0):
   """Calculates the gradients of the relative entropy loss of coarse-graining. The provided
 configurations (confs) to average over should be in the coarse-grained coordinates. Note that
 we cannot compute the loss directly without knowning the CG ensemble partition function, so
 this only returns the gradients with respect to the coefficients.
+
+If not in 1D, will switch default mc_sim and mc_params to simulate a lattice gas. This is
+of course not general behavior, but prevents additional parameters in the training loop, which
+is simpler for now since the only option in more than 1D is the 2D lattice gas.
   """
-  #import matplotlib.pyplot as plt
+  if mc_sim is None:
+    if len(confs.shape) > 2:
+      #Only capture case for reduced lattice gas grid
+      #To avoid this, must change training loop so specifies mc_sim and mc_params
+      mc_sim = sim_reduced_lg_cg
+      mc_params = {'num_steps':int(1e3), 'move_probs':[0.5, 0.25, 0.25], 'beta':beta}
+    else:
+      mc_sim = sim_cg
+      mc_params = {'num_steps':int(1e3), 'mc_noise':0.1, 'beta':beta}
   #First term is average over full-resolution ensemble
   full_res_avg = np.average(cg_pot.get_coeff_derivs(confs), axis=0)
   #For next term need to average over CG ensemble, so run simulation in this ensemble first
   #That is, if cg_confs are not already provided
   if cg_confs is None:
-    cg_confs, cg_energies = sim_cg(confs, cg_pot,
-                                   num_steps=num_steps, mc_noise=mc_noise, beta=beta)
+    cg_confs, cg_energies = mc_sim(confs, cg_pot, **mc_params)
   cg_res_avg = np.average(cg_pot.get_coeff_derivs(cg_confs), axis=0)
   grads = beta*(full_res_avg - cg_res_avg)
   return grads

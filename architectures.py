@@ -787,6 +787,74 @@ number of coefficients.
     return self.beta*coeff_derivs
 
 
+class LatticeGasCGReduceMap(tf.keras.layers.Layer):
+  """Deterministic OR stochastic mapping of lattice gas to smaller lattice. Specify the
+number of sites to group as n_group, which should divide the larger lattice into an integer
+number of new sites. For deterministic maps, have two options: average the sites and assign
+this non-integer value, or average the sites and assign 0 if < 0.5 or 1 if > 0.5. Can also
+look at latter as type of deterministic "sampling," so use sample_stochastic to switch
+between this and drawing from a Bernoulli distribution based on the average.
+  """
+
+  def __init__(self, name='encoder',
+               n_group= 4,
+               sample=True, sample_stochastic=True,
+               **kwargs):
+    super(LatticeGasCGReduceMap, self).__init__(name=name, **kwargs)
+    self.n_group = n_group
+    self.sample = sample
+    self.sample_stochastic = sample_stochastic
+
+  def call(self, x_input):
+    #Do pooled averaging over sites
+    #If not an integer, pads as evenly as possible on both sides
+    #Padded values do not contribute to the average, though
+    pooled_x = tf.nn.avg_pool(x_input, (self.n_group, self.n_group),
+                              (self.n_group, self.n_group), 'SAME')
+    if self.sample:
+      if self.sample_stochastic:
+        rand_vals = tf.random.uniform(pooled_x.shape)
+      else:
+        rand_vals = 0.5
+      out = tf.cast((pooled_x > rand_vals), dtype='float32')
+    else:
+      out = pooled_x
+    return out
+
+
+class ReducedLGPotential(tf.keras.layers.Layer):
+  """Reproduces the lattice gas Hamiltonian in losses, but makes mu and epsilon
+adjustable tensorflow variables.
+  """
+
+  def __init__(self, name='lg_u', beta=1.0, **kwargs):
+    super(ReducedLGPotential, self).__init__(name=name, **kwargs)
+    #To make work more easily with spline-based code, have single vector of parameters
+    #Less readable, but stating here that first position is mu, second is epsilon
+    self.coeffs = self.add_weight(name='mu_eps', shape=(2,), trainable=True)
+    self.beta = beta
+
+  def call(self, x):
+    #Shift all indices by 1 in up and down then left and right and multiply by original
+    ud = self.coeffs[1]*x*tf.roll(x, 1, axis=1)
+    lr = self.coeffs[1]*x*tf.roll(x, 1, axis=2)
+    #Next incorporate chemical potential term
+    chempot = self.coeffs[0]*x
+    #And sum everything up
+    H = tf.reduce_sum(ud + lr - chempot, axis=np.arange(1, len(x.shape)))
+    return self.beta*H
+
+  def get_coeff_derivs(self, x):
+    """Hard-coding of derivatives for Srel optimization. Note that returns derivative for
+each input point. Tensorflow could take its own derivatives, but following what was done
+for spline potential, where tensorflow cannot compute derivatives itself.
+    """
+    mu_deriv = -tf.reduce_sum(x, axis=np.arange(1, len(x.shape)))
+    eps_deriv = tf.reduce_sum(x*tf.roll(x, 1, axis=1) + x*tf.roll(x, 1, axis=2),
+                              axis=np.arange(1, len(x.shape)))
+    return tf.stack([mu_deriv, eps_deriv], axis=1).numpy()
+
+
 class MaskedNet(tf.keras.layers.Layer):
   """Dense neural network with connections controlled by a mask, which allows for creation
 of autoregressive networks if the mask is properly designed. This is based on the code for
@@ -1301,5 +1369,128 @@ class AutoConvDecoder(tf.keras.layers.Layer):
                                       conditional_input=latent_tensor,
                                       training=False)
       return tf.ones(conf_out.shape), conf_out
+
+
+class AutoregressivePrior(tf.keras.layers.Layer):
+  """Creates autoregressive model for the prior distribution, P(z), representing a direct
+modelling alternative to a flow that can be used to represent discrete distributions. A full
+neural network representation of the potential function for an Srel model would be more
+general and expressive, but more difficult to code and train.
+  """
+
+  def __init__(self, out_shape, name='prior',
+               hidden_dim=200,
+               kernel_initializer='glorot_uniform',
+               return_vars=False,
+               **kwargs):
+    super(AutoregressivePrior, self).__init__(name=name, **kwargs)
+    self.out_shape = out_shape
+    self.hidden_dim = hidden_dim
+    self.kernel_initializer = kernel_initializer
+    self.return_vars = return_vars
+    if self.return_vars:
+      self.num_params = 2
+    else:
+      self.num_params = 1
+    #Create variables to represent the parameters for the first DOF
+    self.first_params = self.add_weight(shape=(self.num_params,), name='first_params',
+                                        initializer=self.kernel_initializer,
+                                        trainable=True)
+    #Next create autoregressive model to predict probabilities
+    #(Really parameters for probabilitistic models)
+    self.auto_groupings = np.repeat(
+                          np.arange(1, np.ceil(np.prod(out_shape)) + 1),
+                          1)[:int(np.prod(out_shape))].astype(np.int32)
+    self.autonet = MaskedNet(self.num_params,
+                             event_shape=np.prod(self.out_shape),
+                             hidden_units=[self.hidden_dim,],
+                             dof_order=self.auto_groupings,
+                             activation='tanh',
+                             use_bias=True,
+                             kernel_initializer=self.kernel_initializer)
+    #And will need function to flatten training data if have it
+    self.flatten = tf.keras.layers.Flatten()
+
+  def create_dist(self, params):
+    """Need a function to create a sampling distribution for the autoregressive distribution.
+Will use Gaussian if return_vars is True and Bernoulli if False. Note that during training
+no sampling is performed, only calculation of probabilities, allowing gradients to work.
+Really just want to pass parameters - can use autoregressive network outside of this.
+If return_vars is true, params should be a list of [means, logvars].
+    """
+    if self.return_vars:
+      means = params[0]
+      logvars = params[1]
+      base_dist = tfp.distributions.Normal(means, tf.exp(0.5*logvars))
+      #base_dist = tfp.distributions.Laplace(means, tf.exp(logvars))
+    else:
+      base_dist = tfp.distributions.Bernoulli(logits=params, dtype='float32')
+    this_dist = tfp.distributions.Independent(base_dist, reinterpreted_batch_ndims=1)
+    return this_dist
+
+  def call(self, batch_size, train_data=None):
+    """Only input is batch size (how many samples to produce).
+If training data provided, overrides.
+    """
+    if train_data is not None:
+      train_data = self.flatten(train_data)
+      batch_size = train_data.shape[0]
+
+    #Assign parameters for first DOF across all batch members
+    first_params = tf.tile(tf.reshape(self.first_params, (1,)+self.first_params.shape),
+                           (batch_size, 1))
+
+    #If provided training data, use to find parameters from autoregressive model
+    if train_data is not None:
+      means = self.autonet(self.flatten(train_data))
+      if self.return_vars:
+        means, logvars = tf.split(means, 2, axis=-1)
+        logvars = tf.squeeze(logvars, axis=-1)
+        logvars = tf.concat((first_params[:, -1:], logvars[:, 1:]), axis=-1)
+      #Have to replace meaningless first parameter
+      means = tf.squeeze(means, axis=-1)
+      means = tf.concat((first_params[:, :1], means[:, 1:]), axis=-1)
+      #If just training, will return only calculated log probabilities
+      if self.return_vars:
+        log_probs = self.create_dist([means, logvars]).log_prob(train_data)
+      else:
+        log_probs = self.create_dist(means).log_prob(train_data)
+      return log_probs
+
+    #If not training, generate a sample and associated log probabilities
+    else:
+      mean_out = first_params[:, :1]
+      if self.return_vars:
+        logvar_out = first_params[:, -1:]
+      #Will need to pad to generate starting sample
+      padding = [[0, 0], [0, np.prod(self.out_shape)-1]]
+      #Below will fail if return_vars is True but param_logvar is not specified!
+      if self.return_vars:
+        sample_out = self.create_dist([tf.pad(mean_out, padding),
+                                       tf.pad(logvar_out, padding)]).sample()
+      else:
+        sample_out = self.create_dist(tf.pad(mean_out, padding)).sample()
+      #Do in a loop over number of dimensions in data, sampling each based on previous
+      for i in range(1, np.prod(self.out_shape)):
+        this_means = self.autonet(sample_out)
+        if self.return_vars:
+          this_means, this_logvars = tf.split(this_means, 2, axis=-1)
+          this_logvars = tf.squeeze(this_logvars, axis=-1)
+          logvar_out = tf.concat((logvar_out, this_logvars[:, i:i+1]), axis=-1)
+        #Add on to existing parameter information
+        this_means = tf.squeeze(this_means, axis=-1)
+        mean_out = tf.concat((mean_out, this_means[:, i:i+1]), axis=-1)
+        #Sample from distribution because need values to predict next degree of freedom
+        if self.return_vars:
+          this_sample = self.create_dist([this_means, this_logvars]).sample()
+        else:
+          this_sample = self.create_dist(this_means).sample()
+        sample_out = tf.concat((sample_out[:, :i], this_sample[:, i:]), axis=-1)
+      #Calculate log probabilities and return
+      if self.return_vars:
+        log_probs = self.create_dist([mean_out, logvar_out]).log_prob(sample_out)
+      else:
+        log_probs = self.create_dist(mean_out).log_prob(sample_out)
+      return log_probs, tf.reshape(sample_out, (batch_size,)+self.out_shape)
 
 
