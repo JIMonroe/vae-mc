@@ -53,15 +53,15 @@ class FCEncoder(tf.keras.layers.Layer):
   """
 
   def __init__(self, num_latent, name='encoder', hidden_dim=1200,
-               #periodic_dofs=[False,],
+               periodic_dofs=[False,],
                kernel_initializer='glorot_uniform',
                **kwargs):
     super(FCEncoder, self).__init__(name=name, **kwargs)
     self.num_latent = num_latent
     self.hidden_dim = hidden_dim
     #Set up periodic DOF boolean list
-    #self.any_periodic = np.any(periodic_dofs)
-    #self.periodic_dofs = periodic_dofs
+    self.any_periodic = np.any(periodic_dofs)
+    self.periodic_dofs = periodic_dofs
     self.kernel_initializer = kernel_initializer
     self.flattened = tf.keras.layers.Flatten()
     self.e1 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.relu, name="e1",
@@ -76,13 +76,13 @@ class FCEncoder(tf.keras.layers.Layer):
   def call(self, input_tensor):
     flattened_out = self.flattened(input_tensor)
     #If have periodic DOFs, want to convert to 2D non-periodic coordinates in first step
-    #if self.any_periodic:
-    #  flattened_out_p = tf.boolean_mask(flattened_out, self.periodic_dofs, axis=1)
-    #  flattened_out_nonp = tf.boolean_mask(flattened_out,
-    #                                      tf.math.logical_not(self.periodic_dofs), axis=1)
-    #  cos_p = tf.math.cos(flattened_out_p)
-    #  sin_p = tf.math.sin(flattened_out_p)
-    #  flattened_out = tf.concat([flattened_out_nonp, cos_p, sin_p], axis=-1)
+    if self.any_periodic:
+      flattened_out_p = tf.boolean_mask(flattened_out, self.periodic_dofs, axis=1)
+      flattened_out_nonp = tf.boolean_mask(flattened_out,
+                                           tf.math.logical_not(self.periodic_dofs), axis=1)
+      cos_p = tf.math.cos(flattened_out_p)
+      sin_p = tf.math.sin(flattened_out_p)
+      flattened_out = tf.concat([flattened_out_nonp, cos_p, sin_p], axis=-1)
     e1_out = self.e1(flattened_out)
     e2_out = self.e2(e1_out)
     means_out = self.means(e2_out)
@@ -1151,12 +1151,20 @@ If return_vars is true, params should be a list of [means, logvars].
           base_dist_list = []
           for i in range(means.shape[1]):
             if self.periodic_dofs[i]:
-              #base_dist_list.append(tfp.distributions.VonMises(means[:, i],
-              #                                                 tf.exp(-logvars[:, i])))
-              base_dist_list.append(tfp.distributions.TruncatedNormal(means[:, i],
-                                                               tf.exp(0.5*logvars[:, i]),
-                                                               -tf.ones((means.shape[0], 1)),
-                                                               tf.ones((means.shape[0], 1))))
+              base_dist_list.append(tfp.distributions.VonMises(means[:, i],
+                                                               tf.exp(-logvars[:, i])))
+              #Decided that if using periodic DOFs, should use throughout.
+              #In other words, if periodic_dofs set to True for a VAE model, it means
+              #that the encoder converts these to sine-cosine pairs and the decoder
+              #produces outputs according to a periodic von Mises distribution.
+              #The below instead assumes that you're given sine-cosine pairs and you
+              #also output sine-cosine pairs, but you truncate the distribution.
+              #This is not strictly necessary (because np.arctan2 will normalize) and in
+              #simple tests with the polymer proved no better and maybe detrimental.
+              #base_dist_list.append(tfp.distributions.TruncatedNormal(means[:, i],
+              #                                                tf.exp(0.5*logvars[:, i]),
+              #                                                -tf.ones((means.shape[0], 1)),
+              #                                                tf.ones((means.shape[0], 1))))
             else:
               base_dist_list.append(tfp.distributions.Normal(means[:, i],
                                                              tf.exp(0.5*logvars[:, i])))
