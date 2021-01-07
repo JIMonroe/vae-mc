@@ -1,0 +1,20 @@
+name: machinelearning
+channels:
+  - conda-forge
+  - omnia
+dependencies:
+  - netcdf4
+  - ipykernel
+  - scipy
+  - numpy
+  - mdtraj
+  - python=3.7
+  - openmm
+  - openmmtools
+  - mdanalysis
+  - pip:
+      - tensorflow
+      - tensorflow-probability
+# prefix: /Users/jim2/bin/miniforge3/envs/machinelearning
+#After done, need to install development mdanalysis (2.0) and Frank Noe's deep_boltzmann
+#Find directories in bin and run `pip install -e .` where there is a setup.py present
