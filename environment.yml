@@ -3,6 +3,7 @@ channels:
   - conda-forge
   - omnia
 dependencies:
+  - pip
   - netcdf4
   - ipykernel
   - scipy
@@ -11,6 +12,8 @@ dependencies:
   - python=3.7
   - openmm
   - openmmtools
+  - nglview
+  - parmed
   - mdanalysis
   - pip:
       - tensorflow
@@ -18,3 +21,5 @@ dependencies:
 # prefix: /Users/jim2/bin/miniforge3/envs/machinelearning
 #After done, need to install development mdanalysis (2.0) and Frank Noe's deep_boltzmann
 #Find directories in bin and run `pip install -e .` where there is a setup.py present
+#For mdanalysis to work right, need to first run `conda remove --force mdanalysis`
+#That way you get all the right dependencies in conda but the development version in pip
