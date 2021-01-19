@@ -836,7 +836,10 @@ def trainSrelCG(model,
     print('\tValidation max_gradient=%f'%val_grad)
 
   print("Training completed at: %s"%time.ctime())
-  print(model.summary())
+  try:
+    print(model.summary())
+  except ValueError:
+    print('Would print summary, but part of model has not yet been built.')
 
   #print(train_history.history)
 

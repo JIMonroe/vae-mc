@@ -151,14 +151,14 @@ interpreting the data.
 
     #If have prior flow and drawing directly, can obtain log probability exactly
     #(don't need to estimate, even though already have in zDrawDirect function)
-    if (self.prior_flow) and (draw_type == 'direct'):
-      z_prior, log_det = self.flow(z_draw, reverse=True)
-      prior_log_prob = -0.5*tf.reduce_sum(tf.square(z_prior)
-                                          + tf.math.log(2.0*np.pi),
-                                          axis=1).numpy()
-      prior_log_prob += log_det.numpy()
-      print("Estimated log(P) vs exact with prior flow: %f, %f"%(log_prob, prior_log_prob))
-      log_prob = prior_log_prob
+    #if (self.prior_flow) and (draw_type == 'direct'):
+    #  z_prior, log_det = self.flow(z_draw, reverse=True)
+    #  prior_log_prob = -0.5*tf.reduce_sum(tf.square(z_prior)
+    #                                      + tf.math.log(2.0*np.pi),
+    #                                      axis=1).numpy()
+    #  prior_log_prob += log_det.numpy()
+    #  print("Estimated log(P) vs exact with prior flow: %f, %f"%(log_prob, prior_log_prob))
+    #  log_prob = prior_log_prob
 
     #Given a batch size and draw size, reshape to reflect this
     z_draw = tf.reshape(z_draw, (nDraws, batch_size, z_draw.shape[-1]))
