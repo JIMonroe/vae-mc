@@ -28,6 +28,13 @@ _dimer_params = ParticleDimer.params_default.copy()
 _dimer_params['dimer_slope'] = 2.0
 _dim_model = ParticleDimer(params=_dimer_params)
 
+#For the polymer and alanine, need openmm for poential energies
+import simtk.unit as unit
+import simtk.openmm as mm
+from simtk.openmm import app
+import parmed as pmd
+from openmmtools import testsystems
+
 
 #Identical to tf.keras.losses.BinaryCrossentropy(from_logits=True)
 #(if activation is "logits")
@@ -188,6 +195,64 @@ def dimerHamiltonian(conf, doClip=True):
     return linlogcut_tf(u, high_E=10000, max_E=1e10)
   else:
     return u
+
+
+class polymerHamiltonian(object):
+
+  def __init__(self, topFile, strucFile, transform_func=None):
+    parmstruc = pmd.load_file(topFile, xyz=strucFile)
+    self.top = parmstruc.topology
+    self.system = parmstruc.createSystem(nonbondedMethod=app.NoCutoff,
+                                         constraints=app.AllBonds,
+                                         removeCMMotion=True,
+                                         flexibleConstraints=False)
+    self.sim = app.Simulation(self.top,
+                              self.system,
+                              mm.LangevinIntegrator(300.0*unit.kelvin,
+                                                    1.0/unit.picoseconds,
+                                                    2.0*unit.femtoseconds),
+                              mm.Platform.getPlatformByName('CPU'))
+    self.transform_func = transform_func
+  
+  def __call__(self, configs):
+    pot_energies = np.zeros(configs.shape[0])
+    for i, conf in enumerate(configs):
+      if self.transform_func is not None:
+        conf = self.transform_func(conf)
+      self.sim.context.setPositions(conf*unit.angstroms)
+      this_state = self.sim.context.getState(getEnergy=True)
+      pot_quantity = this_state.getPotentialEnergy()
+      pot_energies[i] = pot_quantity.value_in_unit(unit.kilojoules_per_mole)
+    return pot_energies
+
+
+class dialanineHamiltonian(object):
+
+  def __init__(self, transform_func=None):
+    ala_vac = testsystems.AlanineDipeptideVacuum()
+    ff = app.ForceField('amber99sb.xml')
+    self.top = ala_vac.topology
+    self.system = ff.createSystem(ala_vac.topology,
+                                  nonbondedMethod=app.NoCutoff,
+                                  constraints=app.HBonds)
+    self.sim = app.Simulation(self.top,
+                              self.system,
+                              mm.LangevinIntegrator(300.0*unit.kelvin,
+                                                    1.0/unit.picoseconds,
+                                                    2.0*unit.femtoseconds),
+                              mm.Platform.getPlatformByName('CPU'))
+    self.transform_func = transform_func
+  
+  def __call__(self, configs):
+    pot_energies = np.zeros(configs.shape[0])
+    for i, conf in enumerate(configs):
+      if self.transform_func is not None:
+        conf = self.transform_func(conf)
+      self.sim.context.setPositions(conf*unit.angstroms)
+      this_state = self.sim.context.getState(getEnergy=True)
+      pot_quantity = this_state.getPotentialEnergy()
+      pot_energies[i] = pot_quantity.value_in_unit(unit.kilojoules_per_mole)
+    return pot_energies
 
 
 def gaussian_sampler(mean, logvar):

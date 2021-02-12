@@ -276,7 +276,9 @@ called with different styles of draws for z.
   z2LogProb = np.squeeze(z2LogProb, axis=0)
   #Now draw new configuration based on new z
   newConfig, logProbX2 = xDrawSimple(vaeModel, newZ, **samplerParams)
-  newU = energyFunc(newConfig, **energyParams).numpy()
+  newU = energyFunc(newConfig, **energyParams)
+  if tf.is_tensor(newU):
+    newU = newU.numpy()
 
   #Retrace steps in reverse direction
   #Calculate probability of drawing newZ from P(z|x2)
