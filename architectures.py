@@ -953,7 +953,6 @@ flexibility with the masking operation.
                                                  kernel_initializer=self.kernel_initializer))
     super(MaskedNet, self).build(input_shape)
 
-
   def call(self, input_tensor, conditional_input=None):
     out = self.flatten(input_tensor)
     for k in range(len(self.networks)):
@@ -1151,8 +1150,14 @@ If return_vars is true, params should be a list of [means, logvars].
           base_dist_list = []
           for i in range(means.shape[1]):
             if self.periodic_dofs[i]:
+              #With VonMises in tfp, will get NaN if logvars too negative
+              #Issues with sampling if less than about -43 and issues with logP if about -80
+              #Doesn't give infinity, though, just NaN due to sampling algorithm
+              #So we will make sure it's bigger than -40
+              #Well, those numbers work on a CPU... for a GPU you get random NaNs
+              #starting at about -17 for the purposes of sampling
               base_dist_list.append(tfp.distributions.VonMises(means[:, i],
-                                                               tf.exp(-logvars[:, i])))
+                                                  tf.exp(-tf.maximum(logvars[:, i], -15.0))))
               #Decided that if using periodic DOFs, should use throughout.
               #In other words, if periodic_dofs set to True for a VAE model, it means
               #that the encoder converts these to sine-cosine pairs and the decoder
@@ -1209,7 +1214,6 @@ generation (no training data provided), but useful to have at other times as wel
     padding = [[0, 0], [0, np.prod(self.out_shape)-self.auto_group_size]]
     #Below will fail if return_vars is True but param_logvar is not specified!
     if self.return_vars:
-      logvar_out = param_logvar[:, :self.auto_group_size]
       sample_out = self.create_dist([tf.pad(mean_out, padding),
                                      tf.pad(logvar_out, padding)]).sample()
       #If periodic DOFs, sample needs to be stacked together

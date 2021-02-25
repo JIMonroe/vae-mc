@@ -255,6 +255,7 @@ else:
 #Can write trajectory, but for now only with lattice gas
 if write_traj:
   outDat, steps_nc, U_nc, config_nc, biasVals_nc = createDataFile('LG_2D_traj.nc', 28)
+  write_freq = 1000
 
 #Load weights now
 vaeModel.load_weights(weights_file)
@@ -284,7 +285,8 @@ move_probs = [1.0, 0.0, 0.0, 0.0]
 num_steps = 1000
 move_counts = np.zeros((num_parallel, len(move_types)))
 num_acc = np.zeros((num_parallel, len(move_types)))
-mc_stats = np.zeros((num_parallel, num_steps, 8)) #8 if unbiased, 10 if biased
+if move_probs[0] > 0.0:
+  mc_stats = np.zeros((num_parallel, num_steps, 8)) #8 if unbiased, 10 if biased
 U_traj = np.zeros((num_parallel, num_steps+1))
 U_traj[:, 0] = curr_U
 
@@ -325,7 +327,7 @@ for i in range(num_steps):
       N_traj[:, i+1] = np.sum(curr_config, axis=(1, 2, 3))
 
     if write_traj:
-      if (i+1)%5 == 0:
+      if (i+1)%write_freq == 0:
         steps_nc[start_ind:end_ind] = np.arange(start_ind, end_ind)
         U_nc[start_ind:end_ind] = curr_U
         config_nc[start_ind:end_ind, :, :] = curr_config[..., 0]
@@ -339,7 +341,9 @@ for i in range(len(move_types)):
 print("Move statistics: ")
 print(np.sum(move_counts, axis=0))
 
-np.save('mc_stats', mc_stats)
+if move_probs[0] > 0.0:
+  np.save('mc_stats', mc_stats)
+
 np.save('U', U_traj)
 
 if system_type == 'lg':
