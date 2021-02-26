@@ -322,9 +322,9 @@ their paper 'Variational Lossy Autoencoder.'
     self.autoregress = autoregress
     self.include_vars = include_vars
     self.beta = beta
-    self.e_hidden_dim = 1200
-    self.f_hidden_dim = 200
-    self.d_hidden_dim = 1200
+    self.e_hidden_dim = e_hidden_dim
+    self.f_hidden_dim = f_hidden_dim
+    self.d_hidden_dim = d_hidden_dim
     #By default, use fully-connect (fc) architecture for neural nets
     #Can switch to convolutional if specify arch='conv' (won't have flow, though)
     self.arch = arch
