@@ -1013,28 +1013,26 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
     self.d2 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.tanh,
                                     kernel_initializer=self.kernel_initializer)
     if self.return_vars:
-      out_event_dims = 2
+      self.out_event_dims = 2
+      if self.any_periodic:
+        self.out_event_dims += 1
     else:
-      out_event_dims = 1
+      self.out_event_dims = 1
     #Will predict means (and log variances) with neural net
     #Autoregressive network will then shift means and scale variances (so shift log vars)
     #The shifts will augment the base distribution as information on sampled configs is added
-    self.base_param = tf.keras.layers.Dense(out_event_dims*np.prod(self.out_shape),
+    self.base_param = tf.keras.layers.Dense(self.out_event_dims*np.prod(self.out_shape),
                                             activation=None,
                                             kernel_initializer=self.kernel_initializer)
     #And will need function to flatten training data if have it
     self.flatten = tf.keras.layers.Flatten()
 
   def build(self, input_shape):
-    if self.return_vars:
-      out_event_dims = 2
-    else:
-      out_event_dims = 1
     #If want conditional input, need to know latent dimension
     #So create in build method
     #With/without conditional input as latent space tensor if self.skips is true/false
     if self.skips:
-#      self.autonet = tfp.bijectors.AutoregressiveNetwork(out_event_dims,
+#      self.autonet = tfp.bijectors.AutoregressiveNetwork(self.out_event_dims,
 #                                                  event_shape=np.prod(self.out_shape),
 #                                                  conditional=True,
 #                                                  conditional_event_shape=input_shape[1:],
@@ -1044,7 +1042,7 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
 #                                                  hidden_degrees='equal',
 #                                                  activation=tf.nn.tanh,
 #                                                  kernel_initializer=self.kernel_initializer)
-      self.autonet = MaskedNet(out_event_dims,
+      self.autonet = MaskedNet(self.out_event_dims,
                                event_shape=np.prod(self.out_shape),
                                conditional=True,
                                conditional_event_shape=input_shape[1:],
@@ -1054,20 +1052,42 @@ class AutoregressiveDecoder(tf.keras.layers.Layer):
                                use_bias=True,
                                kernel_initializer=self.kernel_initializer)
     else:
-#      self.autonet = tfp.bijectors.AutoregressiveNetwork(out_event_dims,
+#      self.autonet = tfp.bijectors.AutoregressiveNetwork(self.out_event_dims,
 #                                                  event_shape=np.prod(self.out_shape),
 #                                                  hidden_units=[self.hidden_dim,],
 #                                                  input_order='left-to-right',
 #                                                  hidden_degrees='equal',
 #                                                  activation=tf.nn.tanh,
 #                                                  kernel_initializer=self.kernel_initializer)
-      self.autonet = MaskedNet(out_event_dims,
+      self.autonet = MaskedNet(self.out_event_dims,
                                event_shape=np.prod(self.out_shape),
                                hidden_units=[self.hidden_dim,],
                                dof_order=self.auto_groupings,
                                activation='tanh',
                                use_bias=True,
                                kernel_initializer=self.kernel_initializer)
+
+  def _split_shift(self, orig_mean, orig_logvar, shift):
+    """Two ways to split autoregressive network output depending on periodic DOFs.
+       Assumes self.return_vars is True.
+    """
+    if self.any_periodic:
+      cos_shift, sin_shift, logvar_shift = tf.squeeze(tf.split(shift, 3, axis=-1), axis=-1)
+      #Should have list of 2 tensors representing cosine and sine pairs (for some DOFs)
+      cos_out = orig_mean[0] + cos_shift
+      sin_out = orig_mean[1] + sin_shift
+      #For periodic DOFs, pass through arctan2
+      mean_out_p = tf.math.atan2(sin_out, cos_out)
+      #For non-periodic, just add together
+      mean_out_nonp = sin_out + cos_out
+      #Take only the elements we want from each (wastes comp, but differentiable and works)
+      mean_out = tf.where(self.periodic_dofs, mean_out_p, mean_out_nonp)
+      logvar_out = orig_logvar + logvar_shift
+    else:
+      mean_shift, logvar_shift = tf.squeeze(tf.split(shift, 2, axis=-1), axis=-1)
+      mean_out = orig_mean + mean_shift
+      logvar_out = orig_logvar + logvar_shift
+    return mean_out, logvar_out
 
   def get_truncation(self, means, coords,
                      hs_diam=1.1611*0.82, #Actual hard-sphere diameter multiplied by 0.82
@@ -1205,11 +1225,19 @@ generation (no training data provided), but useful to have at other times as wel
     #If the autonet has conditional inputs, the first DOF group may also be modified
     #So first pass through autonet before breaking out first set of parameters
     #Technically, input won't actually matter, just conditional_input for this first pass
-    mean_out = self.autonet(param_mean, conditional_input=skip_input)
+    #Because of handling of periodic DOFs, param_mean may be a list
+    #Need to check this and create initial input based on correct shape
+    if isinstance(param_mean, list):
+      auto_in = tf.zeros_like(param_mean[0])
+    else:
+      auto_in = tf.zeros_like(param_mean)
+    init_shift = self.autonet(auto_in, conditional_input=skip_input)
     if self.return_vars:
-      mean_out, logvar_out = tf.split(mean_out, 2, axis=-1)
-      logvar_out = (param_logvar + tf.squeeze(logvar_out, axis=-1))[:, :self.auto_group_size]
-    mean_out = (param_mean + tf.squeeze(mean_out, axis=-1))[:, :self.auto_group_size]
+      mean_out, logvar_out = self._split_shift(param_mean, param_logvar, init_shift)
+      logvar_out = logvar_out[:, :self.auto_group_size]
+    else:
+      mean_out = param_mean + tf.squeeze(init_shift, axis=-1)
+    mean_out = mean_out[:, :self.auto_group_size]
     #Will need to pad to generate starting sample
     padding = [[0, 0], [0, np.prod(self.out_shape)-self.auto_group_size]]
     #Below will fail if return_vars is True but param_logvar is not specified!
@@ -1224,19 +1252,17 @@ generation (no training data provided), but useful to have at other times as wel
     #Do in a loop over number of dimensions in data, sampling each based on previous
     #Stride it by the autoregressive group size, though
     for i in range(self.auto_group_size, np.prod(self.out_shape), self.auto_group_size):
-      mean_shift = self.autonet(sample_out, conditional_input=skip_input)
+      shift = self.autonet(sample_out, conditional_input=skip_input)
       if self.return_vars:
-        mean_shift, logvar_shift = tf.split(mean_shift, 2, axis=-1)
-        logvar_shift = tf.squeeze(logvar_shift, axis=-1)
-        this_logvar = param_logvar + logvar_shift
+        this_mean, this_logvar = self._split_shift(param_mean, param_logvar, shift)
         logvar_out = tf.concat((logvar_out,
                                 tf.gather(this_logvar,
                                           np.arange(i, i+self.auto_group_size),
                                           axis=-1)),
                                 axis=-1)
+      else:
+        this_mean = param_mean + tf.squeeze(shift, axis=-1)
       #Add on to existing parameter information
-      mean_shift = tf.squeeze(mean_shift, axis=-1)
-      this_mean = param_mean + mean_shift
       mean_out = tf.concat((mean_out,
                             tf.gather(this_mean,
                                       np.arange(i, i+self.auto_group_size),
@@ -1274,17 +1300,19 @@ generation (no training data provided), but useful to have at other times as wel
     d2_out = self.d2(d1_out)
     param_mean = self.base_param(d2_out)
     if self.return_vars:
-      param_mean, param_logvar = tf.split(param_mean, 2, axis=-1)
+      if self.any_periodic:
+        param_cos, param_sin, param_logvar = tf.split(param_mean, 3, axis=-1)
+        param_mean = [param_cos, param_sin]
+      else:
+        param_mean, param_logvar = tf.split(param_mean, 2, axis=-1)
     #Next need to pass through autoregressive network
     #Do this differently if training or generating configurations
     #If training, training data should be provided, which will be passed through autonet
     #The result will be the parameters to be used to evaluate log probabilities of the data
     if train_data is not None:
-      mean_shift = self.autonet(self.flatten(train_data), conditional_input=latent_tensor)
+      shift = self.autonet(self.flatten(train_data), conditional_input=latent_tensor)
       if self.return_vars:
-        mean_shift, logvar_shift = tf.squeeze(tf.split(mean_shift, 2, axis=-1), axis=-1)
-        mean_out = param_mean + mean_shift
-        logvar_out = param_logvar + logvar_shift
+        mean_out, logvar_out = self._split_shift(param_mean, param_logvar, shift)
         if self.truncate_normal:
           low_out, high_out = self.get_truncation(mean_out, self.flatten(train_data))
           mean_out = tf.reshape(mean_out, shape=(-1,)+self.out_shape)
@@ -1297,7 +1325,7 @@ generation (no training data provided), but useful to have at other times as wel
           logvar_out = tf.reshape(logvar_out, shape=(-1,)+self.out_shape)
           return mean_out, logvar_out
       else:
-        mean_out = tf.reshape(param_mean + tf.squeeze(mean_shift, axis=-1),
+        mean_out = tf.reshape(param_mean + tf.squeeze(shift, axis=-1),
                               shape=(-1,)+self.out_shape)
         return mean_out
     #If not training draw sample based on output of dense layers
