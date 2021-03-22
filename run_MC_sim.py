@@ -110,9 +110,15 @@ elif system_type == 'dimer':
 
   trajdict = np.load(dat_files[0], allow_pickle=True)
   data = np.vstack([trajdict['traj_open_hungarian'], trajdict['traj_closed_hungarian']])
-  shift = 0.0 #np.mean(data, axis=0)
+  if 'cw' in weights_file:
+    shift = np.mean(data, axis=0)
+  else:
+    shift = 0.0
   data -= shift
-  scale = 1.0 #np.std(data, axis=0, ddof=1)
+  if 'cw' in weights_file:
+    scale = np.std(data, axis=0, ddof=1)
+  else:
+    scale = 1.0
   data /= scale
 
   def cw_energy(conf):
@@ -255,7 +261,7 @@ else:
 #Can write trajectory, but for now only with lattice gas
 if write_traj:
   outDat, steps_nc, U_nc, config_nc, biasVals_nc = createDataFile('LG_2D_traj.nc', 28)
-  write_freq = 1000
+  write_freq = 5
 
 #Load weights now
 vaeModel.load_weights(weights_file)
