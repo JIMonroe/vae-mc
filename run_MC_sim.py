@@ -110,12 +110,12 @@ elif system_type == 'dimer':
 
   trajdict = np.load(dat_files[0], allow_pickle=True)
   data = np.vstack([trajdict['traj_open_hungarian'], trajdict['traj_closed_hungarian']])
-  if 'cw' in weights_file:
+  if 'centerwhite' in weights_file:
     shift = np.mean(data, axis=0)
   else:
     shift = 0.0
   data -= shift
-  if 'cw' in weights_file:
+  if 'centerwhite' in weights_file:
     scale = np.std(data, axis=0, ddof=1)
   else:
     scale = 1.0
