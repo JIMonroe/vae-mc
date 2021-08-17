@@ -36,20 +36,26 @@ def spherical_transform(coords, dist_sq=None, reverse=False):
     return tf.stack([r, azimuth, polar], axis=-1)
 
 
-def distance_mask(refCoord, coords, k_neighbors=12):
+def distance_mask(refCoord, coords, k_neighbors=12, ref_included=False):
   """Distance-based (Euclidean) mask to select k-nearest neighbors of a point.
   Inputs:
           refCoord - reference coordinate to define distances and neighbors
           coords - all other coordinates to consider
           k_neighbors - (12) number of nearest neighbors to select, masking other coords
+          ref_included - (False) whether or not reference included in coords (will discard if True)
   Outputs:
           k_coords - k nearest coordinates in terms of local coordinate from refCoord (coords - refCoord)
           k_inds - indices in the original coords of the k closest in k_coords
           k_dists - squared distances (Euclidean) from refCoord for k nearest neighbors
   """
+  if ref_included:
+    k_neighbors = k_neighbors + 1
   local_coords = coords - refCoord
   dist_sq = tf.reduce_sum(local_coords * local_coords, axis=-1)
   k_dists, k_inds = tf.math.top_k(-dist_sq, k=k_neighbors) #Takes k largest values, so negate
+  if ref_included:
+    k_dists = k_dists[:, 1:]
+    k_inds = k_inds[:, 1:]
   k_coords = tf.gather(local_coords, k_inds, axis=-2, batch_dims=len(coords.shape)-2)
   return k_coords, k_inds, -k_dists
 
@@ -247,25 +253,61 @@ class ParticleDecoder(tf.keras.layers.Layer):
     log_probs = dist.log_prob(tf.unstack(local_coords, axis=-1))
     return log_probs
 
+  def generate_sample(self, params):
+    #Create distribution and draw sample to return
+    dist = create_dist(params,
+                       self.tfp_dist_list,
+                       param_transforms=self.param_transforms)
+    sample = tf.stack(dist.sample(), axis=-1)
+    return sample
+
+  def select_from_data(self, ref, means, data, data_mask, return_local=False):
+    #Convert from location (or mean) parameter in internal coords to global
+    global_locs = ref + self.coord_transform(means, reverse=True)
+    #Select closest point to mean
+    masked_data = tf.gather(data, data_mask, axis=1, batch_dims=1)
+    data_coords, data_inds, data_dists = distance_mask(global_locs, masked_data, k_neighbors=1)
+    data_coords = data_coords + global_locs #distance_mask makes local around first arg
+    #Mask out this training data point in future searches
+    #Do by removing indices that of used points so won't be gathered next time
+    mask = np.ones(data_mask.shape, dtype=bool)
+    mask[np.arange(data_inds.shape[0]), tf.squeeze(data_inds)] = False
+    data_mask = np.reshape(data_mask[mask], (data_mask.shape[0], -1))
+    #When populating solvent around solutes, want to return in local, transformed coords
+    #And make sure it's local to reference particle, not particle parameters we're adding!
+    if return_local:
+      data_coords = self.coord_transform(data_coords - ref)
+    else:
+      #For solvent around solvent, want global to save computation
+      data_coords = data_coords
+    return data_coords, data_mask
+
   def call(self, solute_coords, train_data=None):
     #Keep track of output solvent coordinates
     #(must do throughout because autoregressive)
-    solvent_out = None
+    solvent_out = tf.reshape(tf.convert_to_tensor([]),
+                             (solute_coords.shape[0], 0, self.solute_out_shape[-1]))
     #Also output parameters
-    params_out = None
+    params_out = tf.reshape(tf.convert_to_tensor([]),
+                            (solute_coords.shape[0], 0,
+                             self.solute_out_shape[-1], len(self.param_transforms)))
     #But parameters in local, transformed coords, so also track reference coords for params
-    ref_out = None
+    ref_out = tf.reshape(tf.convert_to_tensor([]),
+                         (solute_coords.shape[0], 0, self.solute_out_shape[-1]))
+    #Need way to exclude some training data points and only expose those that are unused
+    if train_data is not None:
+      data_mask = np.tile(np.arange(train_data.shape[1])[np.newaxis, :],
+                          (train_data.shape[0], 1))
+
     #For each solute coordinate, loop over and add solvation shell
     for i in range(solute_coords.shape[1]):
       #Find nearest solute neighbors
       ref_coord = solute_coords[:, i:i+1, :] #[n_batch, n_particles, n_coordinate]
-      other_coords = tf.gather(solute_coords,
-                               indices=np.hstack([np.arange(i),
-                                                  np.arange(i+1, solute_coords.shape[1])]),
-                               axis=1)
+      #Including reference for distance mask, so indicate so handles properly
       k_solute_coords, k_solute_inds, k_solute_dists = distance_mask(ref_coord,
-                                                                     other_coords,
-                                                                     k_neighbors=self.k_solute_neighbors)
+                                                                     solute_coords,
+                                                        k_neighbors=self.k_solute_neighbors,
+                                                        ref_included=True)
       #Transform coordinates
       k_solute_coords = self.coord_transform(k_solute_coords)
       #Change behavior if first solute
@@ -276,14 +318,22 @@ class ParticleDecoder(tf.keras.layers.Layer):
         #Again initial params and shifts, but now need closest solvent as well
         k_solvent_coords, k_solvent_inds, k_solvent_dists = distance_mask(ref_coord,
                                                                           solvent_out,
-                                                                          k_neighbors=self.k_solvent_neighbors)
+                                                         k_neighbors=self.k_solvent_neighbors)
         k_solvent_coords = self.coord_transform(k_solvent_coords)
         params, shifts = self.solute_net(k_solute_coords, extra_coords=k_solvent_coords)
-      #Sample first particle in solvation shell
-      dist = create_dist(params + shifts,
-                         self.tfp_dist_list,
-                         param_transforms=self.param_transforms)
-      sample = tf.stack(dist.sample(), axis=-1)
+      #On generation, sample from distribution, while on training, select closest particle
+      if train_data is not None:
+        #Select closest point of data to mean parameters as our "sample"
+        sample, data_mask = self.select_from_data(ref_coord,
+                                                  params[:, :1, :, 0] + shifts[:, :1, :, 0],
+                                                  train_data,
+                                                  data_mask,
+                                                  return_local=True)
+        #Set "sampled" coordinates to identified data point, padded with base param means
+        sample = tf.concat([sample, params[:, 1:, :, 0]], axis=1)
+      else:
+        #Sample first particle in solvation shell
+        sample = self.generate_sample(params + shifts)
       this_solvent_out = tf.identity(sample)
       #Loop over rest of solvation shell to make autoregressive
       for j in range(1, self.solute_net.out_shape[0]):
@@ -293,26 +343,27 @@ class ParticleDecoder(tf.keras.layers.Layer):
           shifts = self.solute_net(k_solute_coords,
                                    extra_coords=k_solvent_coords,
                                    sampled_input=this_solvent_out)
-        dist = create_dist(params + shifts,
-                           self.tfp_dist_list,
-                           param_transforms=self.param_transforms)
-        sample = tf.stack(dist.sample(), axis=-1)
+        if train_data is not None:
+          sample, data_mask = self.select_from_data(ref_coord,
+                                              params[:, j:j+1, :, 0] + shifts[:, j:j+1, :, 0],
+                                              train_data,
+                                              data_mask,
+                                              return_local=True)
+          #Insert data point select ("sample") at jth position
+          sample = tf.concat([params[:, :j, :, 0], sample, params[:, j+1:, :, 0]], axis=1)
+        else:
+          sample = self.generate_sample(params + shifts)
         #Leave items less than index j unchanged in this_solvent_out, update rest
         this_solvent_out = tf.concat([this_solvent_out[:, :j, :], sample[:, j:, :]], axis=1)
       #Before moving to next solute particle, update solvent coordinates
       #Make sure to transform out of local coordinate system
-      if i == 0:
-        solvent_out = ref_coord + self.coord_transform(this_solvent_out, reverse=True)
-        params_out = params + shifts
-        ref_out = tf.tile(ref_coord, (1, this_solvent_out.shape[1], 1))
-      else:
-        solvent_out = tf.concat([solvent_out,
-                           ref_coord + self.coord_transform(this_solvent_out, reverse=True)],
-                                 axis=1)
-        params_out = tf.concat([params_out, params + shifts], axis=1)
-        ref_out = tf.concat([ref_out,
-                             tf.tile(ref_coord, (1, this_solvent_out.shape[1], 1))],
-                            axis=1)
+      solvent_out = tf.concat([solvent_out,
+                         ref_coord + self.coord_transform(this_solvent_out, reverse=True)],
+                              axis=1)
+      params_out = tf.concat([params_out, params + shifts], axis=1)
+      ref_out = tf.concat([ref_out,
+                           tf.tile(ref_coord, (1, this_solvent_out.shape[1], 1))],
+                          axis=1)
 
     #Now all solvation shells should be placed
     #Loop through solvent networks, applying to each solvent particle
@@ -324,34 +375,32 @@ class ParticleDecoder(tf.keras.layers.Layer):
       for i in range(curr_num_solv):
         #Get nearby solutes and solvents
         ref_coord = solvent_out[:, i:i+1, :]
-        other_coords = tf.gather(solvent_out,
-                                 indices=np.hstack([np.arange(i),
-                                                    np.arange(i+1, solvent_out.shape[1])]),
-                                 axis=1)
         k_solute_coords, k_solute_inds, k_solute_dists = distance_mask(ref_coord,
                                                                        solute_coords,
-                                                                       k_neighbors=self.k_solute_neighbors)
+                                                          k_neighbors=self.k_solute_neighbors)
         k_solvent_coords, k_solvent_inds, k_solvent_dists = distance_mask(ref_coord,
-                                                                       other_coords,
-                                                                       k_neighbors=self.k_solvent_neighbors)
+                                                                          solvent_out,
+                                                         k_neighbors=self.k_solvent_neighbors,
+                                                         ref_included=True)
         #Transform coordinates
         k_solute_coords = self.coord_transform(k_solute_coords)
         k_solvent_coords = self.coord_transform(k_solvent_coords)
         #Get parameters and shifts from network
         params, shifts = solv_net(k_solvent_coords, extra_coords=k_solute_coords)
-        dist = create_dist(params + shifts,
-                           self.tfp_dist_list,
-                           param_transforms=self.param_transforms)
-        sample = tf.stack(dist.sample(), axis=-1)
-        #Add sample directly to solvent_out after transforming
-        solvent_out = tf.concat([solvent_out,
-                                 ref_coord + self.coord_transform(sample, reverse=True)],
-                                 axis=1)
+        if train_data is not None:
+          sample, data_mask = self.select_from_data(ref_coord,
+                                                    params[..., 0] + shifts[..., 0],
+                                                    train_data,
+                                                    data_mask,
+                                                    return_local=False)
+        else:
+          sample = self.generate_sample(params + shifts)
+          sample = ref_coord + self.coord_transform(sample, reverse=True)
+        #Add sample directly to solvent_out
+        solvent_out = tf.concat([solvent_out, sample], axis=1)
         params_out = tf.concat([params_out, params + shifts], axis=1)
         ref_out = tf.concat([ref_out, ref_coord], axis=1)
 
     return solvent_out, params_out, ref_out
-
-
 
 
