@@ -83,22 +83,21 @@ is stored as part of the class instance.
     return k_coords, k_inds, -k_dists
 
 
-def create_dist(params, tfp_dist_list, param_transforms=None):
+def create_dist(params, tfp_dist_list, param_transforms):
   """Create sampling distribution for autoregressive sampling.
   Inputs:
           params - array or tensor of dimensions (batch, particle, coordinates, params)
           tfp_dist_list - list of tfp distributions matching length of coordinates dimension
+          param_transforms - list of transformations to apply to parameters before using to define a distribution; should be of same length as coordinates dimension and take the 
   Outputs:
           base_dist - joint tfp distribution over all batches, particles, and coordinates
   """
-  #Set transform to default if None
-  if param_transforms is None:
-    param_transforms = [tf.identity]*params.shape[-1]
   base_dist_list = []
   #Loop over second to last dimension of params
   #(coordinates of each particle, last dimension is prob dist parameters for each coordinate)
   for i in range(params.shape[-2]):
-    this_params = [param_transforms[k](params[..., i, k]) for k in range(params.shape[-1])]
+    this_params = tf.unstack(params[..., i, :], axis=-1)
+    this_params = param_transforms[i](*this_params)
     base_dist_list.append(tfp_dist_list[i](*this_params))
   #Put together into a joint distribution
   base_dist = tfp.distributions.JointDistributionSequential(base_dist_list)
@@ -226,7 +225,9 @@ class ParticleDecoder(tf.keras.layers.Layer):
                k_solvent_neighbors=12,
                name='decoder',
                tfp_dist_list=None,
+               num_params=2,
                param_transforms=None,
+               mean_transforms=None,
                coord_transform=identity_transform,
                hidden_dim=50,
                **kwargs):
@@ -241,23 +242,33 @@ class ParticleDecoder(tf.keras.layers.Layer):
     #Define probability distributions for each coordinate dimension
     if tfp_dist_list is None:
       self.tfp_dist_list = [tfp.distributions.Normal]*coordinate_dimensionality
+    else:
+      self.tfp_dist_list = tfp_dist_list
+    #Need way to know expected number of parameters - should match output of param_transforms
+    self.num_params = num_params
     #Define transformations on parameters (for instance, if predict log(var), take exp)
     if param_transforms is None:
-      self.param_transforms = [tf.identity, lambda x: tf.math.exp(0.5*x)] #Defaults to mean and log(var)
+      self.param_transforms = [lambda x, y: [x, tf.math.exp(0.5*y)]]*coordinate_dimensionality #Defaults to mean and log(var)
     else:
       self.param_transforms = param_transforms
+    #Also need to define transformations on mean functions
+    #For some distributions, mean is constrained, so must transform output on (-inf, inf)
+    if mean_transforms is None:
+      self.mean_transforms = [tf.identity]*coordinate_dimensionality
+    else:
+      self.mean_transforms = mean_transforms
     #Define coordinate transformation
     self.coord_transform = coord_transform
     #And hidden dimension for all networks
     self.hidden_dim = hidden_dim
     #Create all the networks that will be needed
     self.base_solute_net = SolvationNet(self.solute_out_shape,
-                                       out_event_dims=len(self.param_transforms),
+                                       out_event_dims=self.num_params,
                                        hidden_dim=self.hidden_dim,
                                        n_hidden=3,
                                        augment_input=False)
     self.solute_net = SolvationNet(self.solute_out_shape,
-                                  out_event_dims=len(self.param_transforms),
+                                  out_event_dims=self.num_params,
                                   hidden_dim=self.hidden_dim,
                                   n_hidden=3,
                                   augment_input=True)
@@ -267,7 +278,7 @@ class ParticleDecoder(tf.keras.layers.Layer):
     self.solvent_nets = []
     for i in range(num_solvent_nets):
       self.solvent_nets.append(SolvationNet((1, coordinate_dimensionality),
-                                           out_event_dims=len(self.param_transforms),
+                                           out_event_dims=self.num_params,
                                            hidden_dim=self.hidden_dim,
                                            n_hidden=3,
                                            augment_input=True))
@@ -275,19 +286,20 @@ class ParticleDecoder(tf.keras.layers.Layer):
   def get_log_probs(self, coords, params, ref_coords):
     #Transform to local, transformed coordinates
     local_coords = self.coord_transform(coords - ref_coords)
-    dist = create_dist(params, self.tfp_dist_list, param_transforms=self.param_transforms)
+    dist = create_dist(params, self.tfp_dist_list, self.param_transforms)
     log_probs = dist.log_prob(tf.unstack(local_coords, axis=-1))
     return log_probs
 
   def generate_sample(self, params):
     #Create distribution and draw sample to return
-    dist = create_dist(params,
-                       self.tfp_dist_list,
-                       param_transforms=self.param_transforms)
+    dist = create_dist(params, self.tfp_dist_list, self.param_transforms)
     sample = tf.stack(dist.sample(), axis=-1)
     return sample
 
   def select_from_data(self, ref, means, data, data_mask, return_local=False):
+    #First transform means since may be constrained for given distribution
+    trans_means = tf.stack([self.mean_transforms[k](means[..., k])
+                            for k in range(means.shape[-1])], axis=-1)
     #Convert from location (or mean) parameter in internal coords to global
     global_locs = ref + self.coord_transform(means, reverse=True)
     #Select closest point to mean
@@ -316,7 +328,7 @@ class ParticleDecoder(tf.keras.layers.Layer):
     #Also output parameters
     params_out = tf.reshape(tf.convert_to_tensor([]),
                             (solute_coords.shape[0], 0,
-                             self.solute_out_shape[-1], len(self.param_transforms)))
+                             self.solute_out_shape[-1], self.num_params))
     #But parameters in local, transformed coords, so also track reference coords for params
     ref_out = tf.reshape(tf.convert_to_tensor([]),
                          (solute_coords.shape[0], 0, self.solute_out_shape[-1]))
