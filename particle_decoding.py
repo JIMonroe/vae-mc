@@ -32,32 +32,55 @@ def spherical_transform(coords, dist_sq=None, reverse=False):
     else:
       r = tf.math.reduce_euclidean_norm(coords, axis=-1)
     azimuth = tf.math.atan2(coords[..., 1], coords[..., 0])
-    polar = tf.math.acos(coords[..., 2] / r)
+    polar = tf.math.acos(tf.math.divide_no_nan(coords[..., 2], r))
     return tf.stack([r, azimuth, polar], axis=-1)
 
 
-def distance_mask(refCoord, coords, k_neighbors=12, ref_included=False):
-  """Distance-based (Euclidean) mask to select k-nearest neighbors of a point.
-  Inputs:
-          refCoord - reference coordinate to define distances and neighbors
-          coords - all other coordinates to consider
-          k_neighbors - (12) number of nearest neighbors to select, masking other coords
-          ref_included - (False) whether or not reference included in coords (will discard if True)
-  Outputs:
-          k_coords - k nearest coordinates in terms of local coordinate from refCoord (coords - refCoord)
-          k_inds - indices in the original coords of the k closest in k_coords
-          k_dists - squared distances (Euclidean) from refCoord for k nearest neighbors
+class DistanceMask(object):
+  """Class to define a callable operation that masks data by distance to a reference
+coordinate. Useful as class rather than function because if have periodic simulation box,
+need knowledge of the simulation box to correctly compute distances. This information
+is stored as part of the class instance.
   """
-  if ref_included:
-    k_neighbors = k_neighbors + 1
-  local_coords = coords - refCoord
-  dist_sq = tf.reduce_sum(local_coords * local_coords, axis=-1)
-  k_dists, k_inds = tf.math.top_k(-dist_sq, k=k_neighbors) #Takes k largest values, so negate
-  if ref_included:
-    k_dists = k_dists[:, 1:]
-    k_inds = k_inds[:, 1:]
-  k_coords = tf.gather(local_coords, k_inds, axis=-2, batch_dims=len(coords.shape)-2)
-  return k_coords, k_inds, -k_dists
+
+  def __init__(self, box_lengths=None):
+    """Creates instance of DistanceMask class
+    Inputs:
+            box_lengths - (None) simulation box edge lengths; if provided, applies periodic wrapping
+    Outputs:
+            DistanceMask object
+    """
+    #Need ability to apply periodic boundary conditions to compute distances
+    self.boxL = box_lengths
+    if self.boxL is None:
+      self.periodic = False
+    else:
+      self.periodic = True
+
+  def __call__(self, refCoord, coords, k_neighbors=12, ref_included=False):
+    """Distance-based (Euclidean) mask to select k-nearest neighbors of a point.
+    Inputs:
+            refCoord - reference coordinate to define distances and neighbors
+            coords - all other coordinates to consider
+            k_neighbors - (12) number of nearest neighbors to select, masking other coords
+            ref_included - (False) whether or not reference included in coords (will discard if True)
+    Outputs:
+            k_coords - k nearest coordinates in terms of local coordinate from refCoord (coords - refCoord)
+            k_inds - indices in the original coords of the k closest in k_coords
+            k_dists - squared distances (Euclidean) from refCoord for k nearest neighbors
+    """
+    if ref_included:
+      k_neighbors = k_neighbors + 1
+    local_coords = coords - refCoord
+    if self.periodic:
+      local_coords = local_coords - self.boxL*tf.round(local_coords / self.boxL)
+    dist_sq = tf.reduce_sum(local_coords * local_coords, axis=-1)
+    k_dists, k_inds = tf.math.top_k(-dist_sq, k=k_neighbors) #Takes k largest values, so negate
+    if ref_included:
+      k_dists = k_dists[:, 1:]
+      k_inds = k_inds[:, 1:]
+    k_coords = tf.gather(local_coords, k_inds, axis=-2, batch_dims=len(coords.shape)-2)
+    return k_coords, k_inds, -k_dists
 
 
 def create_dist(params, tfp_dist_list, param_transforms=None):
@@ -198,6 +221,7 @@ class ParticleDecoder(tf.keras.layers.Layer):
                solute_shell_num,
                num_solvent_nets,
                coordinate_dimensionality=3,
+               box_lengths=None,
                k_solute_neighbors=12,
                k_solvent_neighbors=12,
                name='decoder',
@@ -209,6 +233,8 @@ class ParticleDecoder(tf.keras.layers.Layer):
     super(ParticleDecoder, self).__init__(name=name, **kwargs)
     #Define output shape for solute networks - number shell particles by dimensionality
     self.solute_out_shape = (solute_shell_num, coordinate_dimensionality)
+    #Define distance mask with option to work directly with periodic simulation box
+    self.distance_mask = DistanceMask(box_lengths=box_lengths)
     #Number of neighbors to select in distance masks for solute and solvent
     self.k_solute_neighbors = k_solute_neighbors
     self.k_solvent_neighbors = k_solvent_neighbors
@@ -266,8 +292,8 @@ class ParticleDecoder(tf.keras.layers.Layer):
     global_locs = ref + self.coord_transform(means, reverse=True)
     #Select closest point to mean
     masked_data = tf.gather(data, data_mask, axis=1, batch_dims=1)
-    data_coords, data_inds, data_dists = distance_mask(global_locs, masked_data, k_neighbors=1)
-    data_coords = data_coords + global_locs #distance_mask makes local around first arg
+    data_coords, data_inds, data_dists = self.distance_mask(global_locs, masked_data, k_neighbors=1)
+    data_coords = data_coords + global_locs #self.distance_mask makes local around first arg
     #Mask out this training data point in future searches
     #Do by removing indices that of used points so won't be gathered next time
     mask = np.ones(data_mask.shape, dtype=bool)
@@ -304,7 +330,7 @@ class ParticleDecoder(tf.keras.layers.Layer):
       #Find nearest solute neighbors
       ref_coord = solute_coords[:, i:i+1, :] #[n_batch, n_particles, n_coordinate]
       #Including reference for distance mask, so indicate so handles properly
-      k_solute_coords, k_solute_inds, k_solute_dists = distance_mask(ref_coord,
+      k_solute_coords, k_solute_inds, k_solute_dists = self.distance_mask(ref_coord,
                                                                      solute_coords,
                                                         k_neighbors=self.k_solute_neighbors,
                                                         ref_included=True)
@@ -316,7 +342,7 @@ class ParticleDecoder(tf.keras.layers.Layer):
         params, shifts = self.base_solute_net(k_solute_coords)
       else:
         #Again initial params and shifts, but now need closest solvent as well
-        k_solvent_coords, k_solvent_inds, k_solvent_dists = distance_mask(ref_coord,
+        k_solvent_coords, k_solvent_inds, k_solvent_dists = self.distance_mask(ref_coord,
                                                                           solvent_out,
                                                          k_neighbors=self.k_solvent_neighbors)
         k_solvent_coords = self.coord_transform(k_solvent_coords)
@@ -375,10 +401,10 @@ class ParticleDecoder(tf.keras.layers.Layer):
       for i in range(curr_num_solv):
         #Get nearby solutes and solvents
         ref_coord = solvent_out[:, i:i+1, :]
-        k_solute_coords, k_solute_inds, k_solute_dists = distance_mask(ref_coord,
+        k_solute_coords, k_solute_inds, k_solute_dists = self.distance_mask(ref_coord,
                                                                        solute_coords,
                                                           k_neighbors=self.k_solute_neighbors)
-        k_solvent_coords, k_solvent_inds, k_solvent_dists = distance_mask(ref_coord,
+        k_solvent_coords, k_solvent_inds, k_solvent_dists = self.distance_mask(ref_coord,
                                                                           solvent_out,
                                                          k_neighbors=self.k_solvent_neighbors,
                                                          ref_included=True)
