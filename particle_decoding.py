@@ -125,7 +125,7 @@ keyword argument extra_coords when calling this class.
             out_event_dims - (2, int) number of probability parameters
             hidden_dim - (50, int) dimension of all hidden layers
             n_hidden - (3, int) number of hidden layers before predicting base parameters
-            augment_input - (True, bool) whether or not to expect to seperate sets of input coordinates; if so, will add a second set of hidden layers to process extra input; useful for separating out and processing solute and solvent input coordinates differently
+            augment_input - (True, bool) whether or not to expect two seperate sets of input coordinates; if so, will add a second set of hidden layers to process extra input; useful for separating out and processing solute and solvent input coordinates differently
     Outputs:
              SolvationNet layer
     """
@@ -177,7 +177,7 @@ keyword argument extra_coords when calling this class.
     #Assumes coordinates have already been selected and transformed appropriately
     #(i.e., we're taking inputs and producing outputs all in terms of a central particle)
     flattened = self.flat(input_coords)
-    if self.augment_input and extra_coords is not None:
+    if self.augment_input and (extra_coords is not None):
       #If including extra coords, like solvent, include in conditional input
       extra_flat = self.flat(extra_coords)
       cond_input = tf.concat([flattened, extra_flat], axis=-1)
@@ -196,7 +196,7 @@ keyword argument extra_coords when calling this class.
       for h_layer in self.hidden_layers:
         hidden_out = h_layer(hidden_out)
       #And if including extras, will apply those hidden layers and augment hidden_out
-      if self.augment_input and extra_coords is not None:
+      if self.augment_input and (extra_coords is not None):
         extra_hidden_out = tf.identity(extra_flat)
         for h_layer in self.augment_hidden:
           extra_hidden_out = h_layer(extra_hidden_out)
@@ -214,26 +214,39 @@ keyword argument extra_coords when calling this class.
 
 
 class ParticleDecoder(tf.keras.layers.Layer):
-  """Decodes from solute coordinates, reintroducing solvent.
+  """Base class for particle decoders defining basic init and utility methods.
   """
   def __init__(self,
-               solute_shell_num,
-               num_solvent_nets,
                coordinate_dimensionality=3,
                box_lengths=None,
                k_solute_neighbors=12,
                k_solvent_neighbors=12,
-               name='decoder',
                tfp_dist_list=None,
                num_params=2,
                param_transforms=None,
                mean_transforms=None,
                coord_transform=identity_transform,
                hidden_dim=50,
+               name='decoder',
                **kwargs):
+    """Creates a base particle decoder class not intended to be used for anything, just helpful in defining solute and solvent decoding classes through inheritance. So you will need to implement a 'call' function if you inherit this class.
+    Inputs:
+            coordinate_dimensionality - (3) dimensionality of coordinates of particles
+            box_lengths - (None) vector of length coordinate_dimensionality specifying box edge lengths if have periodic box and want to calculate distances taking that into consideration
+            k_solute_neighbors - (12) number of nearest solute neighbors to consider
+            k_solvent_neighbors - (12) number nearest solvent neighbors to consider when providing inputs to neural networks; effectively sets the n-body level at which autoregression is applied
+            tfp_dist_list - (None) list of length coordinate_dimensionality that specifies tfp distributions that will have parameters provided to them by neural nets and drawn from for sampling; if None, default is to use normal distributions for all dimensions
+            num_params - (2) number of parameters for tfp distributions
+            param_transforms - (None) list of length coordinate_dimensionality specifying the transformations of outputs of the neural nets to pass as parameters to the tfp distributions; if None, default is to specify for normal distribution, so `lambda x, y: [x, tf.math.exp(0.5*y)]*coordinate_dimensionality` which assumes networks output mean and log(var)
+            mean_transforms - (None) list of length coordinate_dimensionality to describe how the actual distribution mean is related to the neural network outputs; by default this uses tf.identity, but for something like spherical coordinates, the radial dimension requires postive means, so may need to have networks produce the log(mean) and apply an exponential
+            coord_transform - (identity_transform) coordinate transformation in local frame around reference particle; by default, no transformation, but if provide function for this, should take cartesian coordinates as input and also have 'reverse' keyword argument to perform reverse transformation
+            hidden_dim - (50) the number of units in hidden layers; probably want to be as large or larger than the number of output coordinates for any given network
+    Outputs:
+            ParticleDecoder object
+    """
     super(ParticleDecoder, self).__init__(name=name, **kwargs)
-    #Define output shape for solute networks - number shell particles by dimensionality
-    self.solute_out_shape = (solute_shell_num, coordinate_dimensionality)
+    #Set dimensionality, which should match input!
+    self.coord_dim = coordinate_dimensionality
     #Define distance mask with option to work directly with periodic simulation box
     self.distance_mask = DistanceMask(box_lengths=box_lengths)
     #Number of neighbors to select in distance masks for solute and solvent
@@ -248,7 +261,7 @@ class ParticleDecoder(tf.keras.layers.Layer):
     self.num_params = num_params
     #Define transformations on parameters (for instance, if predict log(var), take exp)
     if param_transforms is None:
-      self.param_transforms = [lambda x, y: [x, tf.math.exp(0.5*y)]]*coordinate_dimensionality #Defaults to mean and log(var)
+      self.param_transforms = [lambda x, y: [x, tf.math.exp(0.5*y)]]*coordinate_dimensionality #Defaults to mean and log(var) of Normal distribution
     else:
       self.param_transforms = param_transforms
     #Also need to define transformations on mean functions
@@ -261,29 +274,16 @@ class ParticleDecoder(tf.keras.layers.Layer):
     self.coord_transform = coord_transform
     #And hidden dimension for all networks
     self.hidden_dim = hidden_dim
-    #Create all the networks that will be needed
-    self.base_solute_net = SolvationNet(self.solute_out_shape,
-                                       out_event_dims=self.num_params,
-                                       hidden_dim=self.hidden_dim,
-                                       n_hidden=3,
-                                       augment_input=False)
-    self.solute_net = SolvationNet(self.solute_out_shape,
-                                  out_event_dims=self.num_params,
-                                  hidden_dim=self.hidden_dim,
-                                  n_hidden=3,
-                                  augment_input=True)
-    #Solvent nets to be handled as list because number may vary
-    #Each network will double the number of solvent particles present
-    #(by adding 1 new particle for each current particle)
-    self.solvent_nets = []
-    for i in range(num_solvent_nets):
-      self.solvent_nets.append(SolvationNet((1, coordinate_dimensionality),
-                                           out_event_dims=self.num_params,
-                                           hidden_dim=self.hidden_dim,
-                                           n_hidden=3,
-                                           augment_input=True))
 
   def get_log_probs(self, coords, params, ref_coords):
+    """Obtains log probabilities for this decoding model.
+    Inputs:
+            coords - coordinates (global cartesian) to assess probability of (n_batch, n_particles, n_dimensions)
+            params - parameters that define probability distributions for coords (n_batch, n_particles, n_dimensions, n_params)
+            ref_coords - reference coordinates to define local coordinate system for probs
+    Outputs:
+            log_probs - log probabilities of each PARTICLE, so the last dimension of coordinates has been summed over the individual probabilities
+    """
     #Transform to local, transformed coordinates
     local_coords = self.coord_transform(coords - ref_coords)
     dist = create_dist(params, self.tfp_dist_list, self.param_transforms)
@@ -291,17 +291,34 @@ class ParticleDecoder(tf.keras.layers.Layer):
     return log_probs
 
   def generate_sample(self, params):
+    """Generates a sample from given probability distribution parameters.
+    Inputs:
+            params - parameters that define probability distributions (n_batch, n_particles, n_dimensions, n_params)
+    Outputs:
+            sample - sample drawn from probability distributions defined by params
+    """
     #Create distribution and draw sample to return
     dist = create_dist(params, self.tfp_dist_list, self.param_transforms)
     sample = tf.stack(dist.sample(), axis=-1)
     return sample
 
   def select_from_data(self, ref, means, data, data_mask, return_local=False):
-    #First transform means since may be constrained for given distribution
+    """Based on provided means of probability distributions, selects data coordinates closest to them. Data is masked to only select eligible data (i.e., not already used).
+    Inputs:
+            ref - reference coordinate that defines local coordinate system of means (n_batch, 1, n_dims)
+            means - distribution means for selecting closest data (n_batch, 1, n_dims)
+            data - training data to pick from (n_batch, n_particles, n_dims)
+            data_mask - array specifying which indices from data are eligible (n_batch, n_eligible_particles)
+            return_local - (False) whether or not to return data coordinates in the local, transformed coordinate system or the global, cartesian coordinates of a simulation
+    Outputs:
+            data_coords - select data coordinates (n_batch, 1, n_dims)
+            data_mask - new data mask excluding selected data
+    """
+    #First transform means since may be different than parameters for given distribution
     trans_means = tf.stack([self.mean_transforms[k](means[..., k])
                             for k in range(means.shape[-1])], axis=-1)
     #Convert from location (or mean) parameter in internal coords to global
-    global_locs = ref + self.coord_transform(means, reverse=True)
+    global_locs = ref + self.coord_transform(trans_means, reverse=True)
     #Select closest point to mean
     masked_data = tf.gather(data, data_mask, axis=1, batch_dims=1)
     data_coords, data_inds, data_dists = self.distance_mask(global_locs, masked_data, k_neighbors=1)
@@ -320,18 +337,62 @@ class ParticleDecoder(tf.keras.layers.Layer):
       data_coords = data_coords
     return data_coords, data_mask
 
+  def call(self):
+    """Not implemented here as this is intended as a base class to be inherited
+    """
+    raise NotImplementedError()
+
+
+class SoluteDecoder(ParticleDecoder):
+  """Decodes from solute coordinates, reintroducing solvent in solute hydration shells. Inherits from ParticleDecoder to define all class-based utility functions and basic parameters.
+  """
+  def __init__(self,
+               solute_shell_num,
+               name='solute_decoder',
+               **kwargs):
+    """Generates SoluteDecoder class object, creating all necessary neural networks (SolvationNet objects)
+    Inputs:
+            solute_shell_num - number of particles in the solute solvation shell to generate
+    Outputs:
+            SoluteDecoder object
+    """
+    super(SoluteDecoder, self).__init__(name=name, **kwargs)
+    #Define output shape for solute networks - number shell particles by dimensionality
+    self.solute_out_shape = (solute_shell_num, self.coord_dim)
+    #Create all the networks that will be needed
+    self.base_solute_net = SolvationNet(self.solute_out_shape,
+                                       out_event_dims=self.num_params,
+                                       hidden_dim=self.hidden_dim,
+                                       n_hidden=3,
+                                       augment_input=False)
+    self.solute_net = SolvationNet(self.solute_out_shape,
+                                  out_event_dims=self.num_params,
+                                  hidden_dim=self.hidden_dim,
+                                  n_hidden=3,
+                                  augment_input=True)
+
   def call(self, solute_coords, train_data=None):
+    """Given input solute coordinates (and potentially solvent coordinate training data), generates solvent coordinates around solutes.
+    Inputs:
+            solute_coords - solute coordinates to use as "latent" or "CG" variables to decode into solvating solvent (n_batch, n_particles, n_dimensions)
+            train_data - (None) training data with solvent coordinates (n_batch, n_particles, n_dimensions)
+    Outputs:
+            solvent_out - generated solvent coordinates or solvent coords selected from train_data that are closest to generated probability distribution means (n_batch, n_particles, n_dimensions)
+            params_out - generated probability distribution parameters (n_batch, n_particles, n_dimensions, n_params)
+            ref_out - each solvent coordinate was generated/had its probability assessed in local, transformed coordinate system with these coordinates defining the origin (n_batch, n_particles, n_dimensions)
+            unused_data - training data that was not selected and is left-over (in this case, should be applying SolventDecoder next to finish decoding)
+    """
     #Keep track of output solvent coordinates
     #(must do throughout because autoregressive)
     solvent_out = tf.reshape(tf.convert_to_tensor([]),
-                             (solute_coords.shape[0], 0, self.solute_out_shape[-1]))
+                             (solute_coords.shape[0], 0, self.coord_dim))
     #Also output parameters
     params_out = tf.reshape(tf.convert_to_tensor([]),
                             (solute_coords.shape[0], 0,
-                             self.solute_out_shape[-1], self.num_params))
+                             self.coord_dim, self.num_params))
     #But parameters in local, transformed coords, so also track reference coords for params
     ref_out = tf.reshape(tf.convert_to_tensor([]),
-                         (solute_coords.shape[0], 0, self.solute_out_shape[-1]))
+                         (solute_coords.shape[0], 0, self.coord_dim))
     #Need way to exclude some training data points and only expose those that are unused
     if train_data is not None:
       data_mask = np.tile(np.arange(train_data.shape[1])[np.newaxis, :],
@@ -373,6 +434,7 @@ class ParticleDecoder(tf.keras.layers.Layer):
         #Sample first particle in solvation shell
         sample = self.generate_sample(params + shifts)
       this_solvent_out = tf.identity(sample)
+
       #Loop over rest of solvation shell to make autoregressive
       for j in range(1, self.solute_net.out_shape[0]):
         if i == 0:
@@ -393,6 +455,7 @@ class ParticleDecoder(tf.keras.layers.Layer):
           sample = self.generate_sample(params + shifts)
         #Leave items less than index j unchanged in this_solvent_out, update rest
         this_solvent_out = tf.concat([this_solvent_out[:, :j, :], sample[:, j:, :]], axis=1)
+
       #Before moving to next solute particle, update solvent coordinates
       #Make sure to transform out of local coordinate system
       solvent_out = tf.concat([solvent_out,
@@ -403,25 +466,96 @@ class ParticleDecoder(tf.keras.layers.Layer):
                            tf.tile(ref_coord, (1, this_solvent_out.shape[1], 1))],
                           axis=1)
 
-    #Now all solvation shells should be placed
+    if train_data is not None:
+      #Will need to know which solvent were used and which weren't, so return unused as well
+      unused_data = tf.gather(train_data, data_mask, axis=1, batch_dims=1)
+    else:
+      unused_data = None
+
+    return solvent_out, params_out, ref_out, unused_data
+
+
+class SolventDecoder(ParticleDecoder):
+  """Decodes from solvent coordinates, reintroducing one new solvent for each one present in each neural network layer. Inherits from ParticleDecoder to define all class-based utility functions and basic parameters.
+  """
+  def __init__(self,
+               num_solvent_nets,
+               bulk_solvent=False,
+               name='solvent_decoder',
+               **kwargs):
+    """Generates SolventDecoder class object, creating all necessary neural networks (SolvationNet objects)
+    Inputs:
+            num_solvent_nets - number of nets to apply to solvent (will double number with each net)
+            bulk_solvent - (False) boolean for whether or not this applies to bulk solvent (so that solute coordinates should or should not be considered/expected)
+    Outputs:
+            SolventDecoder object
+    """
+    super(SolventDecoder, self).__init__(name=name, **kwargs)
+    #Need to know if solutes are present (or if working with bulk solvent)
+    self.bulk = bulk_solvent
+    #Solvent nets to be handled as list because number may vary
+    #Each network will double the number of solvent particles present
+    #(by adding 1 new particle for each current particle)
+    self.solvent_nets = []
+    for i in range(num_solvent_nets):
+      self.solvent_nets.append(SolvationNet((1, self.coord_dim),
+                                           out_event_dims=self.num_params,
+                                           hidden_dim=self.hidden_dim,
+                                           n_hidden=3,
+                                           augment_input=(not self.bulk)))
+
+  def call(self, solvent_coords, solute_coords=None, train_data=None):
+    """Given input solvent coordinates (and potentially solute coordinates or solvent training data), generates solvent coordinates around solvent.
+    Inputs:
+            solvent_coords - solvent coordinates to use as starting positions to add solvent around (n_batch, n_particles, n_dimensions)
+            solute_coords - (None) if not bulk system (default) must add solute_coords to consider solute when placing new solvent (n_batch, n_particles, n_dimensions)
+            train_data - (None) training data with solvent coordinates (n_batch, n_particles, n_dimensions)
+    Outputs:
+            solvent_out - generated solvent coordinates or solvent coords selected from train_data that are closest to generated probability distribution means (n_batch, n_particles, n_dimensions)
+            params_out - generated probability distribution parameters (n_batch, n_particles, n_dimensions, n_params)
+            ref_out - each solvent coordinate was generated/had its probability assessed in local, transformed coordinate system with these coordinates defining the origin (n_batch, n_particles, n_dimensions)
+            unused_data - training data that was not selected and is left-over (in this case, should be applying another SolventDecoder to finish decoding)
+    """
+    #Keep track of output solvent coordinates
+    #(must do throughout because autoregressive)
+    solvent_out = tf.reshape(tf.convert_to_tensor([]),
+                             (solvent_coords.shape[0], 0, self.coord_dim))
+    #Also output parameters
+    params_out = tf.reshape(tf.convert_to_tensor([]),
+                            (solvent_coords.shape[0], 0,
+                             self.coord_dim, self.num_params))
+    #But parameters in local, transformed coords, so also track reference coords for params
+    ref_out = tf.reshape(tf.convert_to_tensor([]),
+                         (solvent_coords.shape[0], 0, self.coord_dim))
+    #Need way to exclude some training data points and only expose those that are unused
+    if train_data is not None:
+      data_mask = np.tile(np.arange(train_data.shape[1])[np.newaxis, :],
+                          (train_data.shape[0], 1))
+
+    #Solvation shells should already be placed, or may not be relevant
     #Loop through solvent networks, applying to each solvent particle
     #Good news is that for each solvent, just predict 1 particle position
     #So no need for a second autoregressive loop!
     #Will be autoregressive by virture of fact that keep adding to solvent_out
     for solv_net in self.solvent_nets:
-      curr_num_solv = solvent_out.shape[1]
+      curr_num_solv = solvent_coords.shape[1] + solvent_out.shape[1]
       for i in range(curr_num_solv):
+        #Concatenate the solvent input and output each time to make sure it's up to date
+        #But note loop will only run over solvent input and any solvent added on last loop
+        this_solvent = tf.concat([solvent_coords, solvent_out], axis=1)
         #Get nearby solutes and solvents
-        ref_coord = solvent_out[:, i:i+1, :]
-        k_solute_coords, k_solute_inds, k_solute_dists = self.distance_mask(ref_coord,
-                                                                       solute_coords,
+        ref_coord = this_solvent[:, i:i+1, :]
+        if not self.bulk:
+          k_solute_coords, k_solute_inds, k_solute_dists = self.distance_mask(ref_coord,
+                                                                         solute_coords,
                                                           k_neighbors=self.k_solute_neighbors)
+          k_solute_coords = self.coord_transform(k_solute_coords)
+        else:
+          k_solute_coords = None
         k_solvent_coords, k_solvent_inds, k_solvent_dists = self.distance_mask(ref_coord,
-                                                                          solvent_out,
+                                                                          this_solvent,
                                                          k_neighbors=self.k_solvent_neighbors,
                                                          ref_included=True)
-        #Transform coordinates
-        k_solute_coords = self.coord_transform(k_solute_coords)
         k_solvent_coords = self.coord_transform(k_solvent_coords)
         #Get parameters and shifts from network
         params, shifts = solv_net(k_solvent_coords, extra_coords=k_solute_coords)
@@ -439,6 +573,52 @@ class ParticleDecoder(tf.keras.layers.Layer):
         params_out = tf.concat([params_out, params + shifts], axis=1)
         ref_out = tf.concat([ref_out, ref_coord], axis=1)
 
-    return solvent_out, params_out, ref_out
+    if train_data is not None:
+      #May need to know which solvent were used and which weren't, so return unused as well
+      unused_data = tf.gather(train_data, data_mask, axis=1, batch_dims=1)
+    else:
+      unused_data = None
+
+    return solvent_out, params_out, ref_out, unused_data
+
+
+class SoluteSolventDecoder(ParticleDecoder):
+  """Convenience class to join together solute and solvent decoders
+  """
+  def __init__(self,
+               solute_shell_num,
+               num_solvent_nets,
+               name='decoder',
+               **kwargs):
+    """Generates SoluteSolventDecoder class object, by placing a SolventDecoder after a SoluteDecoder
+    Inputs:
+            solute_shell_num - number of particles in the solute solvation shell to generate
+            num_solvent_nets - number of nets to apply to solvent (will double number with each net)
+    Outputs:
+            SoluteSolventDecoder object
+    """
+    super(SoluteSolventDecoder, self).__init__(name=name, **kwargs)
+    self.solute_decoder = SoluteDecoder(solute_shell_num, **kwargs)
+    self.solvent_decoder = SolventDecoder(num_solvent_nets, bulk_solvent=False, **kwargs)
+
+  def call(self, solute_coords, train_data=None):
+    """Given input solute coordinates (and potentially solvent coordinate training data), generates solvent coordinates around solutes.
+    Inputs:
+            solute_coords - solute coordinates to use as "latent" or "CG" variables to decode into solvating solvent (n_batch, n_particles, n_dimensions)
+            train_data - (None) training data with solvent coordinates (n_batch, n_particles, n_dimensions)
+    Outputs:
+            solvent_out - generated solvent coordinates or solvent coords selected from train_data that are closest to generated probability distribution means (n_batch, n_particles, n_dimensions)
+            params_out - generated probability distribution parameters (n_batch, n_particles, n_dimensions, n_params)
+            ref_out - each solvent coordinate was generated/had its probability assessed in local, transformed coordinate system with these coordinates defining the origin (n_batch, n_particles, n_dimensions)
+            unused_data - training data that was not selected and is left-over (in this case, should be applying SolventDecoder next to finish decoding)
+    """
+    sample_out1, params_out1, ref_out1, unused_data = self.solute_decoder(solute_coords, train_data=train_data)
+    sample_out2, params_out2, ref_out2, unused_data = self.solvent_decoder(sample_out1, solute_coords=solute_coords, train_data=unused_data)
+
+    solvent_out = tf.concat([sample_out1, sample_out2], axis=1)
+    params_out = tf.concat([params_out1, params_out2], axis=1)
+    ref_out = tf.concat([ref_out1, ref_out2], axis=1)
+
+    return solvent_out, params_out, ref_out, unused_data
 
 
