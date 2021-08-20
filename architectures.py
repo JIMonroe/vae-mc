@@ -614,7 +614,7 @@ similar cost and  should work much better for 1D flows.
 
   def call(self, input_tensor, reverse=False):
     out = input_tensor
-    log_det_sum = tf.zeros(input_tensor.shape[0])
+    log_det_sum = tf.zeros(tf.shape(input_tensor)[0])
     if not reverse:
       for block in self.block_list:
         log_det_sum += block.forward_log_det_jacobian(out,

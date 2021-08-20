@@ -3,7 +3,7 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
 
-from architectures import MaskedNet
+from architectures import MaskedNet, NormFlowRealNVP, NormFlowRQSplineRealNVP
 
 
 def identity_transform(coords, reverse=False):
@@ -174,6 +174,7 @@ keyword argument extra_coords when calling this class.
             params, shifts - (sampled_input=None) base parameters without autoregression, and shifts from autoregressive model
             shifts - (sampled_input not None) shifts from autoregression given sampled_input and conditional on original input_coords (and potentially also extra_coords)
     """
+    batch_dim = tf.shape(input_coords)[0]
     #Assumes coordinates have already been selected and transformed appropriately
     #(i.e., we're taking inputs and producing outputs all in terms of a central particle)
     flattened = self.flat(input_coords)
@@ -206,7 +207,7 @@ keyword argument extra_coords when calling this class.
       #Really just applying conditional input here, nothing more (skip connections)
       #Should only be in this code block if have not sampled yet
       #(or have not yet started labeling input data points)
-      shifts = self.autonet(tf.zeros((params.shape[0], np.prod(self.out_shape))),
+      shifts = self.autonet(tf.zeros((batch_dim, tf.reduce_prod(self.out_shape))),
                             conditional_input=cond_input)
       params = tf.reshape(params, (-1,)+self.out_shape+(self.out_event_dims,))
       shifts = tf.reshape(shifts, (-1,)+self.out_shape+(self.out_event_dims,))
@@ -315,8 +316,11 @@ class ParticleDecoder(tf.keras.layers.Layer):
             data_mask - new data mask excluding selected data
     """
     #First transform means since may be different than parameters for given distribution
-    trans_means = tf.stack([self.mean_transforms[k](means[..., k])
-                            for k in range(means.shape[-1])], axis=-1)
+    unstacked_means = tf.unstack(means, axis=-1)
+    trans_means = []
+    for k in range(len(unstacked_means)):
+      trans_means.append(self.mean_transforms[k](unstacked_means[k]))
+    trans_means = tf.stack(trans_means, axis=-1)
     #Convert from location (or mean) parameter in internal coords to global
     global_locs = ref + self.coord_transform(trans_means, reverse=True)
     #Select closest point to mean
@@ -325,9 +329,10 @@ class ParticleDecoder(tf.keras.layers.Layer):
     data_coords = data_coords + global_locs #self.distance_mask makes local around first arg
     #Mask out this training data point in future searches
     #Do by removing indices that of used points so won't be gathered next time
-    mask = np.ones(data_mask.shape, dtype=bool)
-    mask[np.arange(data_inds.shape[0]), tf.squeeze(data_inds)] = False
-    data_mask = np.reshape(data_mask[mask], (data_mask.shape[0], -1))
+    mask_shape = tf.shape(data_mask)
+    all_inds = tf.tile(tf.expand_dims(tf.range(mask_shape[-1]), 0), (mask_shape[0], 1))
+    mask = tf.not_equal(all_inds, data_inds)
+    data_mask = tf.reshape(tf.boolean_mask(data_mask, mask), (mask_shape[0], -1))
     #When populating solvent around solutes, want to return in local, transformed coords
     #And make sure it's local to reference particle, not particle parameters we're adding!
     if return_local:
@@ -385,21 +390,29 @@ class SoluteDecoder(ParticleDecoder):
     #Keep track of output solvent coordinates
     #(must do throughout because autoregressive)
     solvent_out = tf.reshape(tf.convert_to_tensor([]),
-                             (solute_coords.shape[0], 0, self.coord_dim))
+                             (tf.shape(solute_coords)[0], 0, self.coord_dim))
     #Also output parameters
     params_out = tf.reshape(tf.convert_to_tensor([]),
-                            (solute_coords.shape[0], 0,
+                            (tf.shape(solute_coords)[0], 0,
                              self.coord_dim, self.num_params))
     #But parameters in local, transformed coords, so also track reference coords for params
     ref_out = tf.reshape(tf.convert_to_tensor([]),
-                         (solute_coords.shape[0], 0, self.coord_dim))
+                         (tf.shape(solute_coords)[0], 0, self.coord_dim))
     #Need way to exclude some training data points and only expose those that are unused
     if train_data is not None:
-      data_mask = np.tile(np.arange(train_data.shape[1])[np.newaxis, :],
+      data_mask = tf.tile(tf.expand_dims(tf.range(train_data.shape[1], dtype=tf.int32), 0),
                           (train_data.shape[0], 1))
+    else:
+      data_mask = tf.ones((1, 1))
 
     #For each solute coordinate, loop over and add solvation shell
     for i in range(solute_coords.shape[1]):
+      #Need below so autograph works because all these things change shape each loop
+      tf.autograph.experimental.set_loop_options(
+                shape_invariants=[(solvent_out, tf.TensorShape([None, None, None])),
+                                  (params_out, tf.TensorShape([None, None, None, None])),
+                                  (ref_out, tf.TensorShape([None, None, None])),
+                                  (data_mask, tf.TensorShape([None, None]))])
       #Find nearest solute neighbors
       ref_coord = solute_coords[:, i:i+1, :] #[n_batch, n_particles, n_coordinate]
       #Including reference for distance mask, so indicate so handles properly
@@ -437,6 +450,8 @@ class SoluteDecoder(ParticleDecoder):
 
       #Loop over rest of solvation shell to make autoregressive
       for j in range(1, self.solute_net.out_shape[0]):
+        tf.autograph.experimental.set_loop_options(
+              shape_invariants=[(this_solvent_out, tf.TensorShape([None, None, None]))])
         if i == 0:
           shifts = self.base_solute_net(k_solute_coords, sampled_input=this_solvent_out)
         else:
@@ -463,7 +478,7 @@ class SoluteDecoder(ParticleDecoder):
                               axis=1)
       params_out = tf.concat([params_out, params + shifts], axis=1)
       ref_out = tf.concat([ref_out,
-                           tf.tile(ref_coord, (1, this_solvent_out.shape[1], 1))],
+                           tf.tile(ref_coord, (1, tf.shape(this_solvent_out)[1], 1))],
                           axis=1)
 
     if train_data is not None:
@@ -516,30 +531,41 @@ class SolventDecoder(ParticleDecoder):
             ref_out - each solvent coordinate was generated/had its probability assessed in local, transformed coordinate system with these coordinates defining the origin (n_batch, n_particles, n_dimensions)
             unused_data - training data that was not selected and is left-over (in this case, should be applying another SolventDecoder to finish decoding)
     """
+    batch_dim = tf.shape(solvent_coords)[0]
     #Keep track of output solvent coordinates
     #(must do throughout because autoregressive)
     solvent_out = tf.reshape(tf.convert_to_tensor([]),
-                             (solvent_coords.shape[0], 0, self.coord_dim))
+                             (batch_dim, 0, self.coord_dim))
     #Also output parameters
     params_out = tf.reshape(tf.convert_to_tensor([]),
-                            (solvent_coords.shape[0], 0,
-                             self.coord_dim, self.num_params))
+                            (batch_dim, 0, self.coord_dim, self.num_params))
     #But parameters in local, transformed coords, so also track reference coords for params
     ref_out = tf.reshape(tf.convert_to_tensor([]),
-                         (solvent_coords.shape[0], 0, self.coord_dim))
+                         (batch_dim, 0, self.coord_dim))
     #Need way to exclude some training data points and only expose those that are unused
     if train_data is not None:
-      data_mask = np.tile(np.arange(train_data.shape[1])[np.newaxis, :],
-                          (train_data.shape[0], 1))
+      data_mask = tf.tile(tf.expand_dims(tf.range(train_data.shape[1], dtype=tf.int32), 0),
+                          (batch_dim, 1))
+    else:
+      data_mask = tf.ones((1, 1))
 
     #Solvation shells should already be placed, or may not be relevant
     #Loop through solvent networks, applying to each solvent particle
     #Good news is that for each solvent, just predict 1 particle position
     #So no need for a second autoregressive loop!
     #Will be autoregressive by virture of fact that keep adding to solvent_out
+    curr_num_solv = solvent_coords.shape[1]
+    solv_count = 0
     for solv_net in self.solvent_nets:
-      curr_num_solv = solvent_coords.shape[1] + solvent_out.shape[1]
+      curr_num_solv = curr_num_solv + solv_count
+      solv_count = 0
       for i in range(curr_num_solv):
+        #Need below so autograph works because all these things change shape each loop
+        tf.autograph.experimental.set_loop_options(
+                shape_invariants=[(solvent_out, tf.TensorShape([None, None, None])),
+                                  (params_out, tf.TensorShape([None, None, None, None])),
+                                  (ref_out, tf.TensorShape([None, None, None])),
+                                  (data_mask, tf.TensorShape([None, None]))])
         #Concatenate the solvent input and output each time to make sure it's up to date
         #But note loop will only run over solvent input and any solvent added on last loop
         this_solvent = tf.concat([solvent_coords, solvent_out], axis=1)
@@ -572,6 +598,7 @@ class SolventDecoder(ParticleDecoder):
         solvent_out = tf.concat([solvent_out, sample], axis=1)
         params_out = tf.concat([params_out, params + shifts], axis=1)
         ref_out = tf.concat([ref_out, ref_coord], axis=1)
+        solv_count += 1
 
     if train_data is not None:
       #May need to know which solvent were used and which weren't, so return unused as well
@@ -620,5 +647,154 @@ class SoluteSolventDecoder(ParticleDecoder):
     ref_out = tf.concat([ref_out1, ref_out2], axis=1)
 
     return solvent_out, params_out, ref_out, unused_data
+
+
+class DecimationEncoder(tf.keras.layers.Layer):
+  """Encoding with fixed, deterministic decimation mapping.
+  """
+
+  def __init__(self,
+               cg_particle_mask,
+               identical_randomize=False,
+               name='encoder',
+               **kwargs):
+    """Generates DecimationEncoder layer that selects out CG particles
+    Inputs:
+            cg_particle_mask - boolean mask to specify which particles are CG or not
+            identical_randomize - (False) if CG sites are identical, may want to randomize labels to encourage better generalization
+    Outputs:
+            DecimationEncoder object
+    """
+    super(DecimationEncoder, self).__init__(name=name, **kwargs)
+    self.cg_mask = cg_particle_mask
+    self.randomize = identical_randomize
+    self.num_cg = int(np.sum(self.cg_mask))
+    self.num_non_cg = int(len(self.cg_mask) - self.num_cg)
+
+  def call(self, input_coords):
+    """Selects out CG particle coordinates and returns from full input coordinate set
+    Inputs:
+            input_coords - coordinates of all particles in full system (n_batch, n_particles, n_dimensions)
+    Outputs:
+            cg_coords - coordinates of just the CG particles
+            non_cg_coords - coordinates of non-CG particles
+    """
+    cg_coords = tf.boolean_mask(input_coords, self.cg_mask, axis=1)
+    non_cg_coords = tf.boolean_mask(input_coords, tf.math.logical_not(self.cg_mask), axis=1)
+    if self.randomize:
+      #cg_coords = tf.transpose(tf.random.shuffle(tf.transpose(cg_coords, perm=[1, 0, 2])),
+      #                         perm=[1, 0, 2])
+      #Above is fast, but all batch samples have particles shuffled the same way
+      cg_coords = tf.map_fn(tf.random.shuffle, cg_coords)
+    #Reshape to ensure that the output shape is well-defined based on input
+    cg_coords = tf.reshape(cg_coords,
+                         (tf.shape(input_coords)[0], self.num_cg, tf.shape(input_coords)[-1]))
+    non_cg_coords = tf.reshape(non_cg_coords,
+                     (tf.shape(input_coords)[0], self.num_non_cg, tf.shape(input_coords)[-1]))
+    return cg_coords, non_cg_coords
+
+
+class PriorFlowSolventVAE(tf.keras.Model):
+  """VAE with fixed, decimation encoding and prior flow to learn the CG potential, then with a particle decoding. This allows for the construction of a typical implicit "solvent" CG model while also learning a back-mapping to re-introduce solvent. Intended for when have bulk solvent and want to "CG" through decimation.
+  """
+
+  def __init__(self,
+               data_shape,
+               num_halves,
+               decoder_kwargs=None,
+               flow_type='rqs',
+               flow_net_params=None,
+               beta=1.0,
+               name='priorflow_vae',
+               **kwargs):
+    """Creates VAE for decimation encoding and decoding of bulk solvent
+    Inputs:
+            data_shape - shape of the full data for the system (n_particles, n_dimensions)
+            num_halves - number of times the number of particles should be reduced by half to define the "coarse-grained" particles
+            decoder_kwargs - (None) dictionary of keyword arguments for the decoder
+            flow_type - ('rqs') can be 'affine' for standard RealNVP or 'rqs' for RealNVP structure with neural splines for the transformation instead
+            flow_net_params = (None) dictionary of keyword arguments for flow
+            beta - (1.0) weight on the KL divergence term; here it's not actually a KL divergence term, it just allows for turning on (1) or off (0) the training of the flow in the CG space
+    Outputs:
+            PriorFlowSolventVAE class instance
+    """
+    super(PriorFlowSolventVAE, self).__init__(name=name, **kwargs)
+    self.beta = beta #Beta for switching on/off learning prior, similar to Beta-VAE
+    self.data_shape = data_shape #Should specify (n_particles, n_dimensions) in full system
+    #To define encoding, specify number of times to halve the number of bulk solvent particles
+    self.num_cg = data_shape[0] / (2*num_halves)
+    self.num_latent = self.num_cg*self.data_shape[1]
+    #And use this to uniformly select out indices of solvent
+    cg_inds = np.arange(0, self.data_shape[0], self.data_shape[0]/self.num_cg, dtype=int)
+    cg_mask = np.zeros(self.data_shape[0], dtype=bool)
+    cg_mask[cg_inds] = True
+    self.encoder = DecimationEncoder(cg_mask, identical_randomize=True)
+    #And next define decoder
+    if decoder_kwargs is None:
+      #By default set box as if all coordinates normalized to be between -1 and 1
+      decoder_kwargs = {'box_lengths':np.array([2.0, 2.0, 2.0])}
+    self.decoder = SolventDecoder(num_halves, bulk_solvent=True, **decoder_kwargs)
+    if flow_type == 'affine':
+      if flow_net_params is None:
+        flow_net_params = {'num_hidden':2, 'hidden_dim':2*self.num_cg,
+                           'nvp_split':True, 'activation':tf.nn.relu}
+      self.flow = NormFlowRealNVP(self.num_latent,
+                                  kernel_initializer='truncated_normal',
+                                  flow_net_params=flow_net_params,
+                                  num_blocks=4)
+    elif flow_type == 'rqs':
+      if flow_net_params is None:
+        #For bin range with decimation mapping and periodic simulation box,
+        #should really use the box dimensions as the bin range
+        #If different in different dimensions, normalize coordinates so between -1 and 1
+        #And make sure all wrapped into the box!
+        flow_net_params = {'bin_range':[-1.0, 1.0], 'num_bins':32,
+                           'hidden_dim':2*self.num_cg}
+      self.flow = NormFlowRQSplineRealNVP(self.num_latent,
+                                          kernel_initializer='truncated_normal',
+                                          rqs_params=flow_net_params)
+    else:
+      raise ValueError("Specified flow type \'%s\' is not known. Should be \'affine\' or \'rqs\'")
+    #If have encoder that doesn't go to 1D, need to flatten encoding for flow
+    self.flatten = tf.keras.layers.Flatten()
+
+  def call(self, inputs, training=False):
+    cg, non_cg = self.encoder(inputs)
+    z = self.flatten(cg)
+    #In this model, no KL divergence, but still want to maximize likelihood of P(z)
+    #Here we define P(z) as a flow over a standard normal prior
+    #So pass z through reverse flow to estimate likelihood
+    #Should be able to do this AFTER training if like, but testing that idea out
+    #If do after, MUST do really well before actually using model in MC simulations
+    if self.beta != 0.0:
+      #If regularization is zero, save time on the calculation
+      z_prior, logdet = self.flow(z, reverse=True)
+      #Estimate (negative) log likelihood of the prior
+      logp_z = tf.reduce_mean(0.5*tf.reduce_sum(tf.square(z_prior)
+                                                + tf.math.log(2.0*np.pi),
+                                                axis=1))
+      #And SUBTRACT the average log determinant for the flow transformation
+      logp_z -= tf.reduce_mean(logdet)
+    else:
+      logp_z = 0.0
+    #With flow only on prior, z passes directly through
+    if training:
+      #Only pass non_cg coords as training data to decoder since not reconstructing cg parts
+      recon_info = self.decoder(cg, train_data=non_cg)
+    else:
+      recon_info = self.decoder(cg)
+    reg_loss = self.beta*logp_z
+    #Add losses within here - keeps code cleaner and less confusing
+    self.add_loss(reg_loss)
+    self.add_metric(tf.reduce_mean(logp_z), name='logp_z', aggregation='mean')
+    self.add_metric(tf.reduce_mean(reg_loss), name='regularizer_loss', aggregation='mean')
+    #And do reconstruction loss, too
+    #With autoregessive models, the proabilities are defined within the decoder itself
+    #So doesn't make sense to have external loss function, really
+    recon_loss = tf.reduce_mean(tf.reduce_sum(self.decoder.get_log_probs(*recon_info[:-1]),
+                                              axis=1))
+    self.add_loss(recon_loss)
+    self.add_metric(tf.reduce_mean(recon_loss), name='recon_loss', aggregation='mean')
+    return recon_info
 
 
