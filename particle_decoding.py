@@ -22,9 +22,9 @@ def spherical_transform(coords, dist_sq=None, reverse=False):
           transformed coordinates - (r, azimuth, polar) for forward, (x, y, z) for reverse
   """
   if reverse:
-    x = coords[..., 0]*tf.math.cos(coords[..., 1])*tf.math.sin(coords[..., 2])
-    y = coords[..., 0]*tf.math.sin(coords[..., 1])*tf.math.sin(coords[..., 2])
-    z = coords[..., 0]*tf.math.cos(coords[..., 2])
+    x = coords[..., 0]*tf.math.cos(coords[..., 1])*tf.math.sin(coords[..., 2]*np.pi)
+    y = coords[..., 0]*tf.math.sin(coords[..., 1])*tf.math.sin(coords[..., 2]*np.pi)
+    z = coords[..., 0]*tf.math.cos(coords[..., 2]*np.pi)
     return tf.stack([x, y, z], axis=-1)
   else:
     if dist_sq is not None:
@@ -32,8 +32,33 @@ def spherical_transform(coords, dist_sq=None, reverse=False):
     else:
       r = tf.math.reduce_euclidean_norm(coords, axis=-1)
     azimuth = tf.math.atan2(coords[..., 1], coords[..., 0])
-    polar = tf.math.acos(tf.math.divide_no_nan(coords[..., 2], r))
+    polar = tf.math.acos(tf.math.divide_no_nan(coords[..., 2], r)) / np.pi
+    #For polar angle, want continuous distribution on interval [0, pi]
+    #Beta distribution works, but it's on [0, 1], so just scale by pi above
+    #And in reverse, multiplying by pi
     return tf.stack([r, azimuth, polar], axis=-1)
+
+
+def cylindrical_transform(coords, dist_sq=None, reverse=False):
+  """Transformation for Cartesian to cylindrical coordinates, so 2D.
+  Inputs:
+          coords - input coordinates (last dimension should be 2); for forward, (x, y), for reverse (r, theta)
+          dist_sq - (None) squared distances if already computed (for forward)
+          reverse - (False) whether to go from cylindrical to 2D Cartesian
+  Outputs:
+          transformed coordinates - (r, theta) for forward, (x, y) for reverse
+  """
+  if reverse:
+    x = coords[..., 0]*tf.math.cos(coords[..., 1])
+    y = coords[..., 0]*tf.math.sin(coords[..., 1])
+    return tf.stack([x, y], axis=-1)
+  else:
+    if dist_sq is not None:
+      r = tf.sqrt(dist_sq)
+    else:
+      r = tf.math.reduce_euclidean_norm(coords, axis=-1)
+    theta = tf.math.atan2(coords[..., 1], coords[..., 0])
+    return tf.stack([r, theta], axis=-1)
 
 
 class DistanceMask(object):
@@ -239,7 +264,7 @@ class ParticleDecoder(tf.keras.layers.Layer):
             tfp_dist_list - (None) list of length coordinate_dimensionality that specifies tfp distributions that will have parameters provided to them by neural nets and drawn from for sampling; if None, default is to use normal distributions for all dimensions
             num_params - (2) number of parameters for tfp distributions
             param_transforms - (None) list of length coordinate_dimensionality specifying the transformations of outputs of the neural nets to pass as parameters to the tfp distributions; if None, default is to specify for normal distribution, so `lambda x, y: [x, tf.math.exp(0.5*y)]*coordinate_dimensionality` which assumes networks output mean and log(var)
-            mean_transforms - (None) list of length coordinate_dimensionality to describe how the actual distribution mean is related to the neural network outputs; by default this uses tf.identity, but for something like spherical coordinates, the radial dimension requires postive means, so may need to have networks produce the log(mean) and apply an exponential
+            mean_transforms - (None) list of length coordinate_dimensionality to describe how the actual distribution mean is related to the neural network outputs; by default this just returns the first parameter, but for something like spherical coordinates, will not have normal distributions so will need to predict other parameters and predict the mean based on those
             coord_transform - (identity_transform) coordinate transformation in local frame around reference particle; by default, no transformation, but if provide function for this, should take cartesian coordinates as input and also have 'reverse' keyword argument to perform reverse transformation
             hidden_dim - (50) the number of units in hidden layers; probably want to be as large or larger than the number of output coordinates for any given network
     Outputs:
@@ -266,9 +291,9 @@ class ParticleDecoder(tf.keras.layers.Layer):
     else:
       self.param_transforms = param_transforms
     #Also need to define transformations on mean functions
-    #For some distributions, mean is constrained, so must transform output on (-inf, inf)
+    #For some distributions, mean is not same as a given parameter, so transform params
     if mean_transforms is None:
-      self.mean_transforms = [tf.identity]*coordinate_dimensionality
+      self.mean_transforms = [lambda x, y: x]*coordinate_dimensionality
     else:
       self.mean_transforms = mean_transforms
     #Define coordinate transformation
@@ -303,11 +328,11 @@ class ParticleDecoder(tf.keras.layers.Layer):
     sample = tf.stack(dist.sample(), axis=-1)
     return sample
 
-  def select_from_data(self, ref, means, data, data_mask, return_local=False):
+  def select_from_data(self, ref, params, data, data_mask, return_local=False):
     """Based on provided means of probability distributions, selects data coordinates closest to them. Data is masked to only select eligible data (i.e., not already used).
     Inputs:
             ref - reference coordinate that defines local coordinate system of means (n_batch, 1, n_dims)
-            means - distribution means for selecting closest data (n_batch, 1, n_dims)
+            params - distribution params for selecting closest data (n_batch, 1, n_dims, n_params)
             data - training data to pick from (n_batch, n_particles, n_dims)
             data_mask - array specifying which indices from data are eligible (n_batch, n_eligible_particles)
             return_local - (False) whether or not to return data coordinates in the local, transformed coordinate system or the global, cartesian coordinates of a simulation
@@ -315,11 +340,12 @@ class ParticleDecoder(tf.keras.layers.Layer):
             data_coords - select data coordinates (n_batch, 1, n_dims)
             data_mask - new data mask excluding selected data
     """
-    #First transform means since may be different than parameters for given distribution
-    unstacked_means = tf.unstack(means, axis=-1)
+    #First transform params into means since may be different for given distribution
+    unstacked_params = tf.unstack(params, axis=-2)
     trans_means = []
-    for k in range(len(unstacked_means)):
-      trans_means.append(self.mean_transforms[k](unstacked_means[k]))
+    #Apply transforms along each coordinate dimension
+    for k in range(len(unstacked_params)):
+      trans_means.append(self.mean_transforms[k](*tf.unstack(unstacked_params[k], axis=-1)))
     trans_means = tf.stack(trans_means, axis=-1)
     #Convert from location (or mean) parameter in internal coords to global
     global_locs = ref + self.coord_transform(trans_means, reverse=True)
@@ -437,7 +463,7 @@ class SoluteDecoder(ParticleDecoder):
       if train_data is not None:
         #Select closest point of data to mean parameters as our "sample"
         sample, data_mask = self.select_from_data(ref_coord,
-                                                  params[:, :1, :, 0] + shifts[:, :1, :, 0],
+                                                  params[:, :1, ...] + shifts[:, :1, ...],
                                                   train_data,
                                                   data_mask,
                                                   return_local=True)
@@ -460,7 +486,7 @@ class SoluteDecoder(ParticleDecoder):
                                    sampled_input=this_solvent_out)
         if train_data is not None:
           sample, data_mask = self.select_from_data(ref_coord,
-                                              params[:, j:j+1, :, 0] + shifts[:, j:j+1, :, 0],
+                                              params[:, j:j+1, ...] + shifts[:, j:j+1, ...],
                                               train_data,
                                               data_mask,
                                               return_local=True)
@@ -587,7 +613,7 @@ class SolventDecoder(ParticleDecoder):
         params, shifts = solv_net(k_solvent_coords, extra_coords=k_solute_coords)
         if train_data is not None:
           sample, data_mask = self.select_from_data(ref_coord,
-                                                    params[..., 0] + shifts[..., 0],
+                                                    params + shifts,
                                                     train_data,
                                                     data_mask,
                                                     return_local=False)
@@ -722,7 +748,7 @@ class PriorFlowSolventVAE(tf.keras.Model):
     self.beta = beta #Beta for switching on/off learning prior, similar to Beta-VAE
     self.data_shape = data_shape #Should specify (n_particles, n_dimensions) in full system
     #To define encoding, specify number of times to halve the number of bulk solvent particles
-    self.num_cg = data_shape[0] / (2*num_halves)
+    self.num_cg = data_shape[0] / (2**num_halves)
     self.num_latent = self.num_cg*self.data_shape[1]
     #And use this to uniformly select out indices of solvent
     cg_inds = np.arange(0, self.data_shape[0], self.data_shape[0]/self.num_cg, dtype=int)
@@ -797,4 +823,25 @@ class PriorFlowSolventVAE(tf.keras.Model):
     self.add_metric(tf.reduce_mean(recon_loss), name='recon_loss', aggregation='mean')
     return recon_info
 
+  def test_step(self, data):
+    """Logic for one evaluation step
+
+    Need custom test step for evaluation because need to set training=True so that autoregression works properly and loss is computed appropriately. Training and prediction steps should still work fine in their default keras.Model state.
+    """
+    x, y, sample_weight = data, None, None #Should just take data, not labels, weights, etc.
+
+    y_pred = self(x, training=True)
+    # Updates stateful loss metrics.
+    self.compiled_loss(
+        y, y_pred, sample_weight, regularization_losses=self.losses)
+    self.compiled_metrics.update_state(y, y_pred, sample_weight)
+    # Collect metrics to return
+    return_metrics = {}
+    for metric in self.metrics:
+      result = metric.result()
+      if isinstance(result, dict):
+        return_metrics.update(result)
+      else:
+        return_metrics[metric.name] = result
+    return return_metrics
 
