@@ -3,7 +3,7 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
 
-from architectures import MaskedNet, NormFlowRealNVP, NormFlowRQSplineRealNVP
+from libVAE.architectures import MaskedNet, NormFlowRealNVP, NormFlowRQSplineRealNVP
 
 
 def identity_transform(coords, reverse=False):
@@ -293,7 +293,7 @@ class ParticleDecoder(tf.keras.layers.Layer):
     #Also need to define transformations on mean functions
     #For some distributions, mean is not same as a given parameter, so transform params
     if mean_transforms is None:
-      self.mean_transforms = [lambda x, y: x]*coordinate_dimensionality
+      self.mean_transforms = [lambda x, y: tf.identity(x)]*coordinate_dimensionality
     else:
       self.mean_transforms = mean_transforms
     #Define coordinate transformation
@@ -817,8 +817,8 @@ class PriorFlowSolventVAE(tf.keras.Model):
     #And do reconstruction loss, too
     #With autoregessive models, the proabilities are defined within the decoder itself
     #So doesn't make sense to have external loss function, really
-    recon_loss = tf.reduce_mean(tf.reduce_sum(self.decoder.get_log_probs(*recon_info[:-1]),
-                                              axis=1))
+    recon_loss = -tf.reduce_mean(tf.reduce_sum(self.decoder.get_log_probs(*recon_info[:-1]),
+                                               axis=1))
     self.add_loss(recon_loss)
     self.add_metric(tf.reduce_mean(recon_loss), name='recon_loss', aggregation='mean')
     return recon_info
