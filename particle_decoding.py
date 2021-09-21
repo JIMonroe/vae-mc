@@ -585,7 +585,12 @@ class SolventDecoder(ParticleDecoder):
     for solv_net in self.solvent_nets:
       curr_num_solv = curr_num_solv + solv_count
       solv_count = 0
-      for i in range(curr_num_solv):
+      #Found that early on, solvent preferentially placed close to reference particles
+      #Later solvent is harder to place because empty space may be further away
+      #To make neural net more transferable, will place half of new solvent
+      #Then use newly placed solvent, which is more likely to be on edges or in voids, as refs
+      ref_inds = np.arange(curr_num_solv//2, curr_num_solv + curr_num_solv//2)
+      for i in ref_inds:
         #Need below so autograph works because all these things change shape each loop
         tf.autograph.experimental.set_loop_options(
                 shape_invariants=[(solvent_out, tf.TensorShape([None, None, None])),
@@ -593,7 +598,8 @@ class SolventDecoder(ParticleDecoder):
                                   (ref_out, tf.TensorShape([None, None, None])),
                                   (data_mask, tf.TensorShape([None, None]))])
         #Concatenate the solvent input and output each time to make sure it's up to date
-        #But note loop will only run over solvent input and any solvent added on last loop
+        #But note loop will run on second half of solvent present at end of previous loop
+        #(so input plus added) and first half of solvent added this loop - see ref_inds
         this_solvent = tf.concat([solvent_coords, solvent_out], axis=1)
         #Get nearby solutes and solvents
         ref_coord = this_solvent[:, i:i+1, :]
