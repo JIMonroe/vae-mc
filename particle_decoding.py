@@ -580,7 +580,7 @@ spacing.
     #(first tiling self.ref_grid to match batch shape, then reshaping)
     #If want to reduce computation and memory, can try to cut number of distances computed
     #May implement in future with boolean to restrict to square neighborhood, etc.
-    tiled_ref = tf.tile(self.ref_grid[None, ...], (coords.shape[0], 1, 1))
+    tiled_ref = tf.tile(self.ref_grid[None, ...], (tf.shape(coords)[0], 1, 1))
     diffs = tiled_ref[..., None] - tf.transpose(coords[..., None], (0, 3, 2, 1))
     #Transpose last dimensions so can do periodic wrapping
     diffs = tf.transpose(diffs, (0, 1, 3, 2))
@@ -601,7 +601,7 @@ spacing.
     """
     new_ind = tf.argmin(dens, axis=-1)
     ref_point = tf.gather(self.ref_grid, new_ind)
-    return tf.reshape(ref_point, (dens.shape[0], 1, self.ref_grid.shape[-1]))
+    return tf.reshape(ref_point, (tf.shape(dens)[0], 1, self.ref_grid.shape[-1]))
 
   def call(self, solvent_coords, solute_coords=None, train_data=None):
     """Given input solvent coordinates (and potentially solute coordinates or solvent training data), generates solvent coordinates around solvent.
