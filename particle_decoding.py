@@ -544,6 +544,64 @@ class SolventDecoder(ParticleDecoder):
                                            hidden_dim=self.hidden_dim,
                                            n_hidden=3,
                                            augment_input=(not self.bulk)))
+    #To save a little time, at the expense of memory, create grid of reference locations
+    self.n_grid = 20
+    locs = [np.arange(-l/2.0, l/2.0, l/self.n_grid, dtype='float32')
+            for l in self.distance_mask.boxL]
+    #Will set Gaussian kernel density std dev to half the grid spacing
+    #So above, setting grid spacing to 1/20 of box lengths in each dimension
+    #More appropriate would be something user-specified and based on particle size
+    #And should be different for solute versus solvent
+    if self.coord_dim == 2:
+      #Treat cases of 2D and 3D, but nothing else
+      locs[0] = np.tile(locs[0], self.n_grid)
+      locs[1] = np.tile(locs[1][:, None], (1, self.n_grid)).flatten()
+    elif self.coord_dim == 3:
+      locs[0] = np.tile(locs[0], self.n_grid**2)
+      locs[1] = np.tile(np.tile(locs[1][:, None], (1, self.n_grid)).flatten(), self.n_grid)
+      locs[2] = np.tile(locs[2][:, None], (1, self.n_grid**2)).flatten()
+    else:
+      raise ValueError("self.coord_dim set to something other than 2 or 3. Only supports 2D or 3D coordinates.")
+    self.ref_grid = np.vstack(locs).T
+
+  def calc_kernel_density(self, coords):
+    """Calculates the kernel-based local density for all reference grid points due to the
+input coordinates. Can use to update the local density of all batches by passing in a single
+coordinate and adding to the density from previous points (that's the whole point of making
+things kernelized, right?). Using Gaussian kernel with std dev of half the smallest grid
+spacing.
+    Inputs:
+            coords - coordinates of already-placed solvent (n_batch, n_particles, n_dimensions)
+    Outputs:
+            kernel_dens - estimate of kernel density using Gaussian kernel
+    """
+    std_dev = 0.5*tf.reduce_min(tf.cast(self.distance_mask.boxL, tf.float32) / self.n_grid)
+    #Get differences efficiently with broadcasting
+    #(first tiling self.ref_grid to match batch shape, then reshaping)
+    #If want to reduce computation and memory, can try to cut number of distances computed
+    #May implement in future with boolean to restrict to square neighborhood, etc.
+    tiled_ref = tf.tile(self.ref_grid[None, ...], (coords.shape[0], 1, 1))
+    diffs = tiled_ref[..., None] - tf.transpose(coords[..., None], (0, 3, 2, 1))
+    #Transpose last dimensions so can do periodic wrapping
+    diffs = tf.transpose(diffs, (0, 1, 3, 2))
+    #Wrap differences periodically
+    diffs = diffs - self.distance_mask.boxL*tf.round(diffs/self.distance_mask.boxL)
+    #Compute squared distances
+    distsq = tf.reduce_sum(diffs**2, axis=-1)
+    #Compute Gaussian kernel density
+    kernel_dens = tf.reduce_sum(tf.math.exp(-distsq/(0.5*(std_dev**2))), axis=-1)
+    return kernel_dens
+
+  def select_ref_point(self, dens):
+    """With local density estimated at each grid point, selects one with minimum density for each batch configuration.
+    Inputs:
+            dens - local densities at each reference grid point in self.ref_grid, so should be (n_batch, n_ref_grid_points)
+    Outputs:
+            ref_point - reference point selected from the grid with lowest local density (for each batch)
+    """
+    new_ind = tf.argmin(dens, axis=-1)
+    ref_point = tf.gather(self.ref_grid, new_ind)
+    return tf.reshape(ref_point, (dens.shape[0], 1, self.ref_grid.shape[-1]))
 
   def call(self, solvent_coords, solute_coords=None, train_data=None):
     """Given input solvent coordinates (and potentially solute coordinates or solvent training data), generates solvent coordinates around solvent.
@@ -582,15 +640,21 @@ class SolventDecoder(ParticleDecoder):
     #Will be autoregressive by virture of fact that keep adding to solvent_out
     curr_num_solv = solvent_coords.shape[1]
     solv_count = 0
+    #Before start looping, get current local densities with just solvent
+    kernel_density = self.calc_kernel_density(solvent_coords)
+    #Add contribution from solutes as well if provided
+    if not self.bulk:
+      kernel_density += self.calc_kernel_density(solute_coords)
     for solv_net in self.solvent_nets:
       curr_num_solv = curr_num_solv + solv_count
       solv_count = 0
       #Found that early on, solvent preferentially placed close to reference particles
       #Later solvent is harder to place because empty space may be further away
-      #To make neural net more transferable, will place half of new solvent
-      #Then use newly placed solvent, which is more likely to be on edges or in voids, as refs
-      ref_inds = np.arange(curr_num_solv//2, curr_num_solv + curr_num_solv//2)
-      for i in ref_inds:
+      #To make neural net more transferable, will select each reference separately from grid
+      #Selection will be based on minimizing local density from kernel approximation
+      #To make efficienty, will just add to local density as add new solvent particles
+      # ref_inds = np.arange(curr_num_solv//2, curr_num_solv + curr_num_solv//2)
+      for i in range(curr_num_solv): # ref_inds:
         #Need below so autograph works because all these things change shape each loop
         tf.autograph.experimental.set_loop_options(
                 shape_invariants=[(solvent_out, tf.TensorShape([None, None, None])),
@@ -598,11 +662,9 @@ class SolventDecoder(ParticleDecoder):
                                   (ref_out, tf.TensorShape([None, None, None])),
                                   (data_mask, tf.TensorShape([None, None]))])
         #Concatenate the solvent input and output each time to make sure it's up to date
-        #But note loop will run on second half of solvent present at end of previous loop
-        #(so input plus added) and first half of solvent added this loop - see ref_inds
         this_solvent = tf.concat([solvent_coords, solvent_out], axis=1)
         #Get nearby solutes and solvents
-        ref_coord = this_solvent[:, i:i+1, :]
+        ref_coord = self.select_ref_point(kernel_density) # this_solvent[:, i:i+1, :]
         if not self.bulk:
           k_solute_coords, k_solute_inds, k_solute_dists = self.distance_mask(ref_coord,
                                                                          solute_coords,
@@ -631,6 +693,8 @@ class SolventDecoder(ParticleDecoder):
         params_out = tf.concat([params_out, params + shifts], axis=1)
         ref_out = tf.concat([ref_out, ref_coord], axis=1)
         solv_count += 1
+        #And update local densities of reference grid
+        kernel_density += self.calc_kernel_density(sample)
 
     if train_data is not None:
       #May need to know which solvent were used and which weren't, so return unused as well
