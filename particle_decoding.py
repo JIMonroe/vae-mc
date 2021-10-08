@@ -675,7 +675,7 @@ spacing.
         k_solvent_coords, k_solvent_inds, k_solvent_dists = self.distance_mask(ref_coord,
                                                                           this_solvent,
                                                          k_neighbors=self.k_solvent_neighbors,
-                                                         ref_included=True)
+                                                         ref_included=False)
         k_solvent_coords = self.coord_transform(k_solvent_coords)
         #Get parameters and shifts from network
         params, shifts = solv_net(k_solvent_coords, extra_coords=k_solute_coords)
