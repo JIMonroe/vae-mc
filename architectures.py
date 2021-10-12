@@ -925,8 +925,8 @@ flexibility with the masking operation.
     #For each hidden dimension, create a mask and a network
     layer_outputs = self.hidden_units + [self.event_shape*self.num_params,]
     self.dof_order = [self.dof_order,]
+    max_degree = np.max(self.dof_order[-1]) - 1
     for k in range(len(layer_outputs)):
-      max_degree = np.max(self.dof_order[-1]) - 1
       if k != len(layer_outputs) - 1:
         next_dof_order = np.ceil(np.arange(1, layer_outputs[k] + 1) * (self.event_shape - 1)
                                  / float(layer_outputs[k] + 1)).astype(np.int32)
