@@ -280,7 +280,7 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
       grads = tape.gradient(loss, model.trainable_weights)
       optimizer.apply_gradients(zip(grads, model.trainable_weights))
 
-      #Catch us some NaNs
+      #Catch more NaNs
       tf.debugging.assert_all_finite(loss, 'Total loss not ok.')
       for k, g in enumerate(grads):
         try:
