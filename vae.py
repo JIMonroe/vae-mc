@@ -674,3 +674,76 @@ Currently only intended for use with a lattice gas system based on the chosen ma
     return reconstructed
 
 
+class FullFlowVAE(tf.keras.Model):
+  """VAE with normalizing flow on the prior AND a conditional flow on the posterior to
+achieve maximal flexibility in the probability models. Fairly specialized with fewer options,
+just because most options don't make sense here - throwing everything at the problem.
+  """
+
+  def __init__(self, data_shape, num_latent,
+               name='fullflow_vae',
+               beta=1.0,
+               e_hidden_dim=1200,
+               f_hidden_dim=200,
+               d_hidden_dim=1200,
+               n_auto_group=1,
+               periodic_dof_inds=[],
+               **kwargs):
+    super(FullFlowVAE, self).__init__(name=name, **kwargs)
+    self.data_shape = data_shape
+    self.num_latent = num_latent
+    self.beta = beta
+    self.e_hidden_dim = e_hidden_dim
+    self.f_hidden_dim = f_hidden_dim
+    self.d_hidden_dim = d_hidden_dim
+    self.n_auto_group = n_auto_group
+    #Allow periodic DOFs using VonMises distribution instead of Normal
+    #This specifies their indices and builds boolean mask to pass to AutoregressiveDecoder
+    self.periodic_dofs = [False,]*data_shape[0]
+    for i in periodic_dof_inds:
+      self.periodic_dofs[i] = True
+    self.encoder = architectures.FCEncoder(num_latent, hidden_dim=self.e_hidden_dim,
+                                           periodic_dofs=self.periodic_dofs)
+    self.decoder = architectures.AutoregressiveFlowDecoder(data_shape,
+                                                           hidden_dim=self.d_hidden_dim,
+                                                           auto_group_size=self.n_auto_group,
+                                                           periodic_dofs=self.periodic_dofs,
+                                                           non_periodic_data_range=20.0)
+    self.sampler = architectures.SampleLatent()
+    flow_net_params = {'bin_range':[-10.0, 10.0], 'num_bins':32,
+                       'hidden_dim':self.f_hidden_dim}
+    self.flow = architectures.NormFlowRQSplineRealNVP(self.num_latent,
+                                                      kernel_initializer='truncated_normal',
+                                                      rqs_params=flow_net_params)
+
+  def regularizer(self, kl_loss, z_mean, z_logvar, z_sampled):
+    del z_mean, z_logvar, z_sampled
+    #For basic VAE, beta = 1.0, but want ability to change it
+    return self.beta * kl_loss
+
+  def call(self, inputs, training=False):
+    z_mean, z_logvar = self.encoder(inputs)
+    z = self.sampler(z_mean, z_logvar)
+    #With flow only on prior, z passes directly through
+    if training:
+      reconstructed = self.decoder(z, train_data=inputs)
+    else:
+      reconstructed = self.decoder(z)
+    #Before estimating KL divergence, pass z through inverse prior flow
+    #(forward flow is used during generation from a standard normal)
+    if self.beta != 0.0:
+      z_prior, logdet = self.flow(z, reverse=True)
+      #Estimate the KL divergence - should return average KL over batch
+      kl_loss = losses.estimate_gaussian_kl(z_prior, z, z_mean, z_logvar)
+      #And SUBTRACT the average log determinant for the flow transformation
+      kl_loss -= tf.reduce_mean(logdet)
+    else:
+      kl_loss = 0.0
+    reg_loss = self.regularizer(kl_loss, z_mean, z_logvar, z)
+    #Add losses within here - keeps code cleaner and less confusing
+    self.add_loss(reg_loss)
+    self.add_metric(tf.reduce_mean(kl_loss), name='kl_loss', aggregation='mean')
+    self.add_metric(tf.reduce_mean(reg_loss), name='regularizer_loss', aggregation='mean')
+    return reconstructed
+
+

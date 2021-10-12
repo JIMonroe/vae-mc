@@ -1534,3 +1534,319 @@ If training data provided, overrides.
       return log_probs, tf.reshape(sample_out, (batch_size,)+self.out_shape)
 
 
+class MaskedSplineBijector(tf.keras.layers.Layer):
+  """Follows tfp example for using rational quadratic splines (as described in Durkan et al.
+2019) to replace affine transformations (in, say, RealNVP). This should allow more flexible
+transformations with similar cost and should work much better with 1D flows. This version
+uses dense layers that are masked to be autoregressive with conditional inputs optional.
+  """
+
+  def _bin_positions(self, x):
+    #x = tf.reshape(x, [x.shape[0], -1, self.num_bins])
+    #MaskedNet already reshapes to event_shape by num_params
+    #So providing event_shape=data_dim and num_params=num_bins
+    out = tf.math.softmax(x, axis=-1)
+    out = out*(self.bin_max - self.bin_min - self.num_bins*1e-2) + 1e-2
+    return out
+
+  def _slopes(self, x):
+    #x = tf.reshape(x, [x.shape[0], -1, self.num_bins - 1])
+    return tf.math.softplus(x) + 1e-2
+
+  def __init__(self, data_dim, name='rqs',
+               bin_range=[-10.0, 10.0],
+               num_bins=32, hidden_dim=200,
+               kernel_initializer='truncated_normal',
+               conditional=False,
+               conditional_event_shape=None,
+               dof_order=None,
+               **kwargs):
+    super(MaskedSplineBijector, self).__init__(name=name, **kwargs)
+    self.data_dim = data_dim
+    self.bin_min = bin_range[0]
+    self.bin_max = bin_range[1]
+    self.num_bins = num_bins
+    self.hidden_dim = hidden_dim
+    self.kernel_initializer = kernel_initializer
+    self.conditional = conditional
+    self.conditional_event_shape = conditional_event_shape   
+    self.dof_order = dof_order
+    #Don't create an initial masked neural net layer...
+    #Will add hidden layers for each spline parameter-generating network
+    #Since autoregressive, 1st DOF will only depend on conditional input
+    #If apply two MaskedNet in a row, end up with the second DOF also only depending on conditional inputs
+    #And so on if have more
+    #(because the 2nd DOF output from the second net only depends on the 1st DOF output from the first net)
+    #Makes sense if remember that MaskedNet is only designed to generate outputs same dimension as inputs
+    #(multiplied by num_params, which is the first argument and set to 1)
+    #So create neural nets for widths, heights, and slopes
+    #And to get right output dimensionality, make self.num_bins the number of parameters
+    self.bin_widths = MaskedNet(self.num_bins,
+                                  event_shape=self.data_dim,
+                                  conditional=self.conditional,
+                                  conditional_event_shape=self.conditional_event_shape,
+                                  hidden_units=[self.hidden_dim,],
+                                  dof_order=self.dof_order,
+                                  activation=tf.nn.tanh,
+                                  use_bias=True,
+                                  kernel_initializer=self.kernel_initializer,
+                                  name='w',
+                                 )
+    self.bin_heights = MaskedNet(self.num_bins,
+                                   event_shape=self.data_dim,
+                                   conditional=self.conditional,
+                                   conditional_event_shape=self.conditional_event_shape,
+                                   hidden_units=[self.hidden_dim,],
+                                   dof_order=self.dof_order,
+                                   activation=tf.nn.tanh,
+                                   use_bias=True,
+                                   kernel_initializer=self.kernel_initializer,
+                                   name='h',
+                                  )
+    self.knot_slopes = MaskedNet(self.num_bins - 1,
+                                   event_shape=self.data_dim,
+                                   conditional=self.conditional,
+                                   conditional_event_shape=self.conditional_event_shape,
+                                   hidden_units=[self.hidden_dim,],
+                                   dof_order=self.dof_order,
+                                   activation=tf.nn.tanh,
+                                   use_bias=True,
+                                   kernel_initializer=self.kernel_initializer,
+                                   name='s',
+                                  )
+
+  def call(self, input_tensor, conditional_input=None):
+    if input_tensor.shape[1] == 0:
+      input_tensor = tf.ones((input_tensor.shape[0], 1))
+    #Use nets to get spline parameters
+    bw = self.bin_widths(input_tensor, conditional_input=conditional_input)
+    #Apply "activations" manually since MaskedNet does not apply activation on last layer
+    bw = self._bin_positions(bw)
+    bh = self.bin_heights(input_tensor, conditional_input=conditional_input)
+    bh = self._bin_positions(bh)
+    ks = self.knot_slopes(input_tensor, conditional_input=conditional_input)
+    ks = self._slopes(ks)
+    return tfp.bijectors.RationalQuadraticSpline(bin_widths=bw,
+                                                 bin_heights=bh,
+                                                 knot_slopes=ks,
+                                                 range_min=self.bin_min)
+
+
+class NormFlowRQSplineMAF(tf.keras.layers.Layer):
+  """Follows tfp example for using rational quadratic splines (as described in Durkan et al.
+2019) but with masked autoregressive flow (MAF) structure.
+  """
+
+  def __init__(self, data_dim, name='rqs_maf', num_blocks=2,
+               kernel_initializer='truncated_normal', rqs_params={},
+               **kwargs):
+    super(NormFlowRQSplineMAF, self).__init__(name=name, **kwargs)
+    self.data_dim = data_dim
+    self.num_blocks = num_blocks
+    self.kernel_initializer = kernel_initializer
+    self.rqs_params = rqs_params
+    #Want to create a spline bijector for each block, so create lists and loop
+    self.net_list = []
+    self.block_list = []
+    for l in range(self.num_blocks):
+      self.net_list.append(MaskedSplineBijector(data_dim,
+                                          kernel_initializer=self.kernel_initializer,
+                                          **rqs_params))
+      self.block_list.append(tfp.bijectors.MaskedAutoregressiveFlow(
+                                                   bijector_fn=self.net_list[l],
+                                                   name='block_%i'%l))
+
+  def call(self, input_tensor, reverse=False, **kwargs):
+    out = input_tensor
+    log_det_sum = tf.zeros(tf.shape(input_tensor)[0])
+    if not reverse:
+      for block in self.block_list:
+        log_det_sum += block.forward_log_det_jacobian(out, **kwargs,
+                                                      event_ndims=len(input_tensor.shape)-1)
+        out = block.forward(out, **kwargs)
+    else:
+      for block in self.block_list[::-1]:
+        log_det_sum += block.inverse_log_det_jacobian(out, **kwargs,
+                                                      event_ndims=len(input_tensor.shape)-1)
+        out = block.inverse(out, **kwargs)
+    return out, log_det_sum
+
+
+class AutoregressiveFlowDecoder(tf.keras.layers.Layer):
+  """Autoregressive decoder with flow after sampling to allow most flexible probability
+modeling when decoding. Essentially works like normal decoding, mapping latents to
+parameters for Gaussian or von Mises distributions. But just does this without any
+autoregression. To build in autoregression, and to make probability distribution very
+flexible, flow sample through autoregressive flow with masked rational quadratic spline
+bijectors. Should allow for multimodal distributions with autoregression. Note that it
+will be conditioned on the latent input throughout, so really its a conditional flow.
+  """
+
+  def __init__(self, out_shape, name='decoder',
+               hidden_dim=200,
+               kernel_initializer='glorot_uniform',
+               auto_group_size=1,
+               periodic_dofs=[False,],
+               non_periodic_data_range=20.0,
+               **kwargs):
+    super(AutoregressiveFlowDecoder, self).__init__(name=name, **kwargs)
+    self.out_shape = out_shape
+    self.hidden_dim = hidden_dim
+    self.kernel_initializer=kernel_initializer
+    #Set return_vars so will be consistent with other decoders
+    self.return_vars = True
+    #Specify which DOFs should be periodic and use VonMises distribution
+    self.any_periodic = np.any(periodic_dofs)
+    if self.any_periodic:
+      #Check if number of specified DOFs match output shape
+      if np.prod(out_shape) != len(periodic_dofs):
+        raise ValueError('Length of periodic_dofs does not match flattened out_shape.'
+                         +'\nIf specifying any periodic DOFs, must specify for all DOFs')
+      else:
+        self.periodic_dofs = periodic_dofs
+    else:
+      self.periodic_dofs = [False,]*np.prod(out_shape)
+    #Specify how to group DOFs together when autoregressing based on group size
+    self.auto_group_size = auto_group_size
+    #For all separate (default if None when pass to MaskedNet) get [1, 2, 3, 4,...]
+    #If wanted to group two DOFs at a time, would want [1, 1, 2, 2, 3, 3,...]
+    self.auto_groupings = np.repeat(
+                          np.arange(1, np.ceil(np.prod(out_shape)/self.auto_group_size) + 1),
+                          self.auto_group_size)[:int(np.prod(out_shape))].astype(np.int32)
+    #Create initial dense neural network layer
+    self.d1 = tf.keras.layers.Dense(self.hidden_dim, activation=tf.nn.tanh,
+                                    kernel_initializer=self.kernel_initializer)
+    #Assume sampling distributions before flow are Gaussian or von Mises
+    #So will only have 2 parameters
+    self.out_event_dims = 2
+    if self.any_periodic:
+      self.out_event_dims += 1
+    #Will predict means (and log variances) with neural net
+    #Autoregressive flow will then map what gets sampled
+    self.base_param = tf.keras.layers.Dense(self.out_event_dims*np.prod(self.out_shape),
+                                            activation=None,
+                                            kernel_initializer=self.kernel_initializer)
+    #And will need function to flatten training data if have it
+    self.flatten = tf.keras.layers.Flatten()
+    #To handle periodic DOFs and allow to pass through flow and maintain domain,
+    #need to scale all DOFs so can just use -pi to pi for flow domain for all
+    #So define scaling here based on supplied non_periodic_data_range
+    scale_for_flow = np.ones(len(periodic_dofs), dtype='float32')
+    scale_for_flow[~np.array(periodic_dofs)] = 2.0*np.pi/non_periodic_data_range
+    self.scale_for_flow = tf.convert_to_tensor(scale_for_flow)
+
+  def build(self, input_shape):
+    #To set up masked autoregressive flow, need to know output dimension
+    #And latent dimension for conditional inputs
+    #Masked autoregressive flow with spline bijectors
+    self.maf = NormFlowRQSplineMAF(np.prod(self.out_shape),
+                                   num_blocks=2,
+                                   rqs_params={'hidden_dim':self.hidden_dim,
+                                               'conditional':True,
+                                               'conditional_event_shape':input_shape[1:],
+                                               'dof_order':self.auto_groupings,
+                                               'bin_range':[-np.pi, np.pi]})
+    #Note that MUST make bin range -pi to pi to accomodate periodic DOFs
+    #For other DOFs, will just scale from non_periodic_data_range to -pi to pi
+    super(AutoregressiveFlowDecoder, self).build(input_shape)
+
+  def _transform_params(self, params):
+    """Two ways to define base parameters depending on periodic DOFs. If periodic, want
+to define mean of von Mises as angle defined by sine and cosine outputs, which keeps it
+in the proper domain.
+    """
+    params = tf.reshape(params, (-1, tf.reduce_prod(self.out_shape), self.out_event_dims))
+    #out_event_dims should be 3 for periodic and 2 for non-periodic
+    if self.any_periodic:
+      cos_mean, sin_mean, logvar = tf.squeeze(tf.split(params, 3, axis=-1), axis=-1)
+      #For periodic DOFs, pass through arctan2
+      mean_out_p = tf.math.atan2(sin_mean, cos_mean)
+      #For non-periodic, just add together
+      mean_out_nonp = sin_mean + cos_mean
+      #Take only the elements we want from each (wastes comp, but differentiable and works)
+      mean_out = tf.where(self.periodic_dofs, mean_out_p, mean_out_nonp)
+      logvar_out = logvar
+    else:
+      mean_out, logvar_out = tf.squeeze(tf.split(params, 2, axis=-1), axis=-1)
+    return mean_out, logvar_out
+
+  def create_dist(self, params):
+    """Need a function to create a sampling distribution, using Gaussian for anything
+not periodic and von Mises for anything periodic. Note that during training, no sampling
+is performed, only calculation of probabilities, allowing gradients to work.
+    """
+    means = params[0]
+    logvars = params[1]
+    #For periodic DOFs, need to build list of distributions
+    #For 'True' values, use VonMises, for 'False' use Normal
+    if self.any_periodic:
+      base_dist_list = []
+      for i in range(means.shape[1]):
+        if self.periodic_dofs[i]:
+          #With VonMises in tfp, will get NaN if logvars too negative
+          #Issues with sampling if less than about -43 and issues with logP if about -80
+          #Doesn't give infinity, though, just NaN due to sampling algorithm
+          #So we will make sure it's bigger than -40
+          #Well, those numbers work on a CPU... for a GPU you get random NaNs
+          #starting at about -17 for the purposes of sampling
+          base_dist_list.append(tfp.distributions.VonMises(means[:, i],
+                                              tf.exp(-tf.maximum(logvars[:, i], -15.0))))
+        else:
+          base_dist_list.append(tfp.distributions.Normal(means[:, i],
+                                                         tf.exp(0.5*logvars[:, i])))
+      #Join together into a joint distribution
+      #This is not as nice to work with as Independent, but will be ok
+      #log_prob() function will return in same way
+      #But sample() will give list of tensors for each DOF, so will need to stack them
+      #(and unstack to feed into log_prob())
+      base_dist = tfp.distributions.JointDistributionSequential(base_dist_list)
+      this_dist = base_dist
+    else:
+      base_dist = tfp.distributions.Normal(means, tf.exp(0.5*logvars))
+      this_dist = tfp.distributions.Independent(base_dist, reinterpreted_batch_ndims=1)
+    return this_dist
+
+  def call(self, latent_tensor, train_data=None):
+    #First predict base parameters with standard dense networks
+    d1_out = self.d1(latent_tensor)
+    params = self.base_param(d1_out)
+    #Transform parameters as needed for periodic DOFs
+    mean_out, logvar_out = self._transform_params(params)
+    #If we are training (train_data not None), need to evaluate log probability and return
+    #This is because inverse flow requires knowledge of the latent coordinate
+    #So makes more sense to just also provide log probability as extra information
+    if train_data is not None:
+      rev_train_data, rev_logdet = self.maf(train_data*self.scale_for_flow,
+                                            conditional_input=latent_tensor,
+                                            reverse=True)
+      rev_train_data = rev_train_data/self.scale_for_flow
+      #Need to unstack data if have periodic DOFs
+      if self.any_periodic:
+        rev_train_data = tf.unstack(rev_train_data, axis=1)
+      log_p = self.create_dist([mean_out, logvar_out]).log_prob(rev_train_data)
+      log_p = log_p + rev_logdet
+      mean_out = tf.reshape(mean_out, shape=(-1,)+self.out_shape)
+      logvar_out = tf.reshape(logvar_out, shape=(-1,)+self.out_shape)
+      return mean_out, logvar_out, log_p
+    #If generating (so train_data=None), actually sample parameters, then flow
+    else:
+      #First generate distributions from parameters
+      prob_dist = self.create_dist([mean_out, logvar_out])
+      sample_out = prob_dist.sample()
+      #Need to stack data if have periodic DOFs
+      if self.any_periodic:
+        sample_out = tf.stack(sample_out, axis=1)
+      sample_out = sample_out*self.scale_for_flow
+      #Pass through forward flow
+      sample_out, logdet_out = self.maf(sample_out,
+                                        conditional_input=latent_tensor,
+                                        reverse=False)
+      sample_out = sample_out/self.scale_for_flow
+      mean_out = tf.reshape(mean_out, shape=(-1,)+self.out_shape)
+      logvar_out = tf.reshape(logvar_out, shape=(-1,)+self.out_shape)
+      sample_out = tf.reshape(sample_out, shape=(-1,)+self.out_shape)
+      #Simple return for now consistent with other AutoregressiveDecoder
+      #Need to think on how to output so most useful for MC moves
+      return mean_out, logvar_out, sample_out
+
+

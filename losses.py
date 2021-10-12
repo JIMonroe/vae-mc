@@ -833,15 +833,18 @@ decoders autoregressive probability distribution.
     self.decoder = decoder
 
   def call(self, true_vals, recon_info):
-    flat_true = self.decoder.flatten(true_vals)
-    if self.decoder.return_vars:
-      flat_recon = [self.decoder.flatten(info) for info in recon_info]
+    if hasattr(self.decoder, 'maf'):
+      log_p = recon_info[-1]
     else:
-      flat_recon = self.decoder.flatten(recon_info)
-    #If have periodic DOFs, need to unstack the DOFs before passing to log_prob
-    if self.decoder.any_periodic:
-      flat_true = tf.unstack(flat_true, axis=1)
-    log_p = self.decoder.create_dist(flat_recon).log_prob(flat_true)
+      flat_true = self.decoder.flatten(true_vals)
+      if self.decoder.return_vars:
+        flat_recon = [self.decoder.flatten(info) for info in recon_info]
+      else:
+        flat_recon = self.decoder.flatten(recon_info)
+      #If have periodic DOFs, need to unstack the DOFs before passing to log_prob
+      if self.decoder.any_periodic:
+        flat_true = tf.unstack(flat_true, axis=1)
+      log_p = self.decoder.create_dist(flat_recon).log_prob(flat_true)
     return -log_p
 
 
