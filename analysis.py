@@ -23,7 +23,7 @@ Assumes a factored Gaussian distribution, so returns means and standard deviatio
       zSample[i*dat.shape[0]:(i+1)*dat.shape[0],:] = model.encoder(dat).numpy()
 
   try:
-    if model.name not in ['priorflow_vae', 'cgmodel', 'dimercg']:
+    if model.name not in ['fullflow_vae', 'priorflow_vae', 'cgmodel', 'dimercg']:
       zSample, log_det = model.flow(zSample)
       zSample = zSample.numpy()
   except AttributeError:

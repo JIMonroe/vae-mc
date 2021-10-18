@@ -199,11 +199,11 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #  del unusedData
   #else:
   #  trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
-  #trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
-  #                                               dset='all', permute=True, center_and_whiten=True)
+  trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
+                                                 dset='all', permute=True, center_and_whiten=True)
   #trainData = dataloaders.raw_image_data(data_file)
   #trainData, valData = dataloaders.dsprites_data(batch_size, val_frac=0.01)
-  trainData, valData = dataloaders.ala_dipeptide_data(data_file, batch_size, val_frac=0.05, rigid_bonds=True, sin_cos=False)
+  #trainData, valData = dataloaders.ala_dipeptide_data(data_file, batch_size, val_frac=0.05, rigid_bonds=True, sin_cos=False)
   #trainData, valData = dataloaders.polymer_data(data_file, batch_size, val_frac=0.05, rigid_bonds=True, sin_cos=True)
 
   #Set up path for checkpoint files
@@ -257,10 +257,10 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
         loss = loss_fn(x_batch_train[0], reconstructed) / x_batch_train[0].shape[0]
 
         #Catchin' NaNs
-        try:
-          tf.debugging.assert_all_finite(reconstructed, 'Reconstruction not ok.')
-        except tf.errors.InvalidArgumentError as e:
-          print('Had NaN or Inf in reconstruction:', reconstructed)
+        #try:
+        #  tf.debugging.assert_all_finite(reconstructed, 'Reconstruction not ok.')
+        #except tf.errors.InvalidArgumentError as e:
+        #  print('Had NaN or Inf in reconstruction:', reconstructed)
         try:
           tf.debugging.assert_all_finite(loss, 'Reconstruction loss not ok.')
         except tf.errors.InvalidArgumentError as e:
