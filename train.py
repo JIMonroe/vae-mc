@@ -199,12 +199,12 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #  del unusedData
   #else:
   #  trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
-  trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
-                                                 dset='all', permute=True, center_and_whiten=True)
+  #trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
+  #                                               dset='all', permute=True, center_and_whiten=True)
   #trainData = dataloaders.raw_image_data(data_file)
   #trainData, valData = dataloaders.dsprites_data(batch_size, val_frac=0.01)
   #trainData, valData = dataloaders.ala_dipeptide_data(data_file, batch_size, val_frac=0.05, rigid_bonds=True, sin_cos=False)
-  #trainData, valData = dataloaders.polymer_data(data_file, batch_size, val_frac=0.05, rigid_bonds=True, sin_cos=True)
+  trainData, valData = dataloaders.polymer_data(data_file, batch_size, val_frac=0.05, rigid_bonds=True, sin_cos=False)
 
   #Set up path for checkpoint files
   checkpoint_path = os.path.join(save_dir, 'training.ckpt')

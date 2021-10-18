@@ -1,5 +1,6 @@
 
 import sys, os
+import gc
 import time
 
 import numpy as np
@@ -103,10 +104,13 @@ if system_type == 'lg':
 #If do add other systems, must set up energy functions for them as well!
 elif system_type == 'dimer':
   print("Setting up VAE for 2D particle dimer with latent dimension %i"%latent_dim)
-  vaeModel = vae.PriorFlowVAE((76,), latent_dim, autoregress=True,
-                              include_vars=True, n_auto_group=2,
-                              e_hidden_dim=300,
-                              d_hidden_dim=300)
+  #vaeModel = vae.PriorFlowVAE((76,), latent_dim, autoregress=True,
+  #                            include_vars=True, n_auto_group=2,
+  #                            e_hidden_dim=300,
+  #                            d_hidden_dim=300)
+  vaeModel = vae.FullFlowVAE((76,), latent_dim, n_auto_group=2,
+                            e_hidden_dim=300,
+                            d_hidden_dim=300)
 
   trajdict = np.load(dat_files[0], allow_pickle=True)
   data = np.vstack([trajdict['traj_open_hungarian'], trajdict['traj_closed_hungarian']])
@@ -127,7 +131,7 @@ elif system_type == 'dimer':
   energy_func = cw_energy
   energy_params = {}
   sampler_params = {'activation':None,
-                    'sampler_func':vaeModel.decoder.create_sample,
+                    'sampler_func':None, #vaeModel.decoder.create_sample,
                     'logp_func':losses.AutoregressiveLoss(vaeModel.decoder,
                                                    reduction=tf.keras.losses.Reduction.NONE)}
   beta = 1.00
@@ -339,6 +343,9 @@ for i in range(num_steps):
         config_nc[start_ind:end_ind, :, :] = curr_config[..., 0]
         start_ind += num_parallel
         end_ind += num_parallel
+
+    #tf.keras.backend.clear_session()
+    gc.collect()
 
 print("Acceptance rates: ")
 for i in range(len(move_types)):

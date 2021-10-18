@@ -100,7 +100,7 @@ interpreting the data.
       self.flow = vae_model.flow
     except AttributeError:
       self.flow = None
-    self.prior_flow = (('prior' in vae_model.name) or (vae_model.name == 'cgmodel'))
+    self.prior_flow = (('prior' in vae_model.name) or (vae_model.name == 'cgmodel') or ('fullflow' in vae_model.name))
 
   def __call__(self, draw_type='std_normal', zSel=None, nDraws=1, batch_size=1):
     #First handle batch size - force to match zSel if have zSel
@@ -187,7 +187,7 @@ and calculate its probability given x.
       raise ValueError('Batch size of x is %i and zSel is %i - must match!'
                         %(batch_size, zSel.shape[0]))
     try:
-      if (('prior' not in vae_model.name) and (vae_model.name != 'cgmodel')):
+      if (('prior' not in vae_model.name) and (vae_model.name != 'cgmodel') and ('fullflow' not in vae_model.name)):
         zSel, sel_log_det_rev = vae_model.flow(zSel, reverse=True)
     except AttributeError:
       pass
@@ -210,7 +210,7 @@ and calculate its probability given x.
   zlogprob = tf.reduce_sum( -0.5*tf.math.square(zval - zMean)/tf.math.exp(zLogvar)
                             - 0.5*np.log(2.0*np.pi) - 0.5*zLogvar, axis=1).numpy()
   try:
-    if (('prior' not in vae_model.name) and (vae_model.name != 'cgmodel')):
+    if (('prior' not in vae_model.name) and (vae_model.name != 'cgmodel') and ('fullflow' not in vae_model.name)):
       zval, log_det = vae_model.flow(zval)
       zlogprob -= log_det.numpy()
   except AttributeError:
@@ -325,7 +325,7 @@ def vaeBias(vae_model, x, nSample=200):
   z = vae_model.sampler(tf.tile(zMean, (nSample,1)), tf.tile(zLogvar, (nSample,1)))
   log_det = 0.0
   #If have prior flow, need to apply to calculate P(z) in terms of known standard normal
-  if 'prior' in vae_model.name:
+  if (('prior' in vae_model.name) or ('fullflow' in vae_model.name)):
     z, log_det = vae_model.flow(z, reverse=True)
     log_det = tf.reshape(log_det, (nSample, batch_size, 1))
   z = tf.reshape(z, (nSample,)+zMean.shape)
