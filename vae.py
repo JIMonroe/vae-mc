@@ -690,6 +690,7 @@ just because most options don't make sense here - throwing everything at the pro
                periodic_dof_inds=[],
                **kwargs):
     super(FullFlowVAE, self).__init__(name=name, **kwargs)
+    self.autoregress = True #Set for compatibility
     self.data_shape = data_shape
     self.num_latent = num_latent
     self.beta = beta

@@ -1833,6 +1833,7 @@ is performed, only calculation of probabilities, allowing gradients to work.
       #First generate distributions from parameters
       prob_dist = self.create_dist([mean_out, logvar_out])
       sample_out = prob_dist.sample()
+      log_p = prob_dist.log_prob(sample_out)
       #Need to stack data if have periodic DOFs
       if self.any_periodic:
         sample_out = tf.stack(sample_out, axis=1)
@@ -1841,12 +1842,14 @@ is performed, only calculation of probabilities, allowing gradients to work.
       sample_out, logdet_out = self.maf(sample_out,
                                         conditional_input=latent_tensor,
                                         reverse=False)
+      log_p = log_p - logdet_out
       sample_out = sample_out/self.scale_for_flow
       mean_out = tf.reshape(mean_out, shape=(-1,)+self.out_shape)
       logvar_out = tf.reshape(logvar_out, shape=(-1,)+self.out_shape)
       sample_out = tf.reshape(sample_out, shape=(-1,)+self.out_shape)
-      #Simple return for now consistent with other AutoregressiveDecoder
-      #Need to think on how to output so most useful for MC moves
-      return mean_out, logvar_out, sample_out
+      #To work with MC moves, just return log_p and create AutoregressiveLoss function
+      #Works similarly to other autoregressive models because only thing added
+      #when not training is the actual sample, which is always returned last
+      return mean_out, logvar_out, log_p, sample_out
 
 
