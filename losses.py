@@ -866,3 +866,58 @@ loop requires minimal alterations.
     return -log_p
 
 
+class dimer_reverseKL_loss(object):
+  """Computes an upper bound on the reverse KL divergence, so KL(P(x), Ptrue(x)). To do
+this, you have to sample P(z), then sample P(x|z) and compute the potential energies of
+generated configurations. And also average over P(x|z) for those same configs.
+  """
+
+  def __init__(self, vae, thermo_beta=1.0):
+    #Just need to define a VAE to use...
+    self.vae = vae
+    #Check if has a flow
+    if hasattr(vae, 'flow'):
+      self.do_flow = True
+    else:
+      self.do_flow = False
+    #Set up quick way to compute log_p - expects loss, so will always take negative
+    self.logp_func = AutoregressiveLoss(vae.decoder, reduction=tf.keras.losses.Reduction.NONE)
+    #Need to set thermodynamic beta for defining dimensionless potential energy
+    self.thermo_beta = tf.cast(thermo_beta, tf.float32)
+
+  def __call__(self,
+               x_train,
+               unused_recon_info):
+    #Remove unused information
+    del unused_recon_info
+
+    #Get batch shape
+    batch_size = tf.shape(x_train)[0]
+    #First draw a z sample from a standard normal (assumes this is form of latent)
+    tz_sample = tf.random.normal((batch_size, self.vae.num_latent))
+
+    #Pass through flow if have one
+    if self.do_flow:
+      z_sample, logdet = self.vae.flow(tz_sample, reverse=False)
+    else:
+      z_sample = tz_sample
+      logdet = 0.0  #Won't actually matter for this calculation
+
+    #Pass through decoder and draw samples
+    #Will be slow if autoregressive
+    x_info = self.vae.decoder(z_sample)
+
+    #By calling without training data, will actually sample P(x|z)
+    #If using tfp, will do this in way that is differentiable - just be careful
+    x_sample = x_info[-1]
+    x_info = x_info[:-1]
+
+    #And get probabilities of all configurations
+    log_Pxz = -self.logp_func(x_sample, x_info)
+
+    #And get all potential energies - must be done with tf functions compatible with autograd!
+    u_pot = tf.cast(dimerHamiltonian(x_sample), 'float32')
+
+    loss = tf.reduce_mean(self.thermo_beta*u_pot + log_Pxz)
+    return loss
+
