@@ -96,7 +96,7 @@ if system_type == 'lg':
   sampler_params = {'activation':None,
                     'sampler_func':losses.binary_sampler,
                     'logp_func':losses.bernoulli_loss}
-  beta = 1.77
+  beta = 3.54 #1.60 #2.00 #1.77
   data = dataloaders.raw_image_data(dat_files)
   #Should add command line option for saving to file, but instead adding flag here
   write_traj = True
@@ -199,11 +199,15 @@ elif 'poly' in system_type:
   print("Setting up VAE for polymer with latent dimension %i"%latent_dim)
   periodic_inds = list(range(-17, 0))
   if 'periodic' in weights_file:
-    vaeModel = vae.PriorFlowVAE((35,), latent_dim, autoregress=True,
-                                include_vars=True, n_auto_group=1,
-                                periodic_dof_inds=periodic_inds,
-                                e_hidden_dim=300,
-                                d_hidden_dim=300)
+    #vaeModel = vae.PriorFlowVAE((35,), latent_dim, autoregress=True,
+    #                            include_vars=True, n_auto_group=1,
+    #                            periodic_dof_inds=periodic_inds,
+    #                            e_hidden_dim=300,
+    #                            d_hidden_dim=300)
+    vaeModel = vae.FullFlowVAE((35,), latent_dim, n_auto_group=1,
+                               periodic_dof_inds=periodic_inds,
+                               e_hidden_dim=300,
+                               d_hidden_dim=300)
   elif 'sincos' in weights_file:
     vaeModel = vae.PriorFlowVAE((52,), latent_dim, autoregress=True,
                                 include_vars=True, n_auto_group=1,
@@ -247,7 +251,7 @@ elif 'poly' in system_type:
   energy_func = losses.polymerHamiltonian(topFile, strucFile, transform_func=transform)
   energy_params = {}
   sampler_params = {'activation':None,
-                    'sampler_func':vaeModel.decoder.create_sample,
+                    'sampler_func':None, #vaeModel.decoder.create_sample,
                     'logp_func':losses.AutoregressiveLoss(vaeModel.decoder,
                                                    reduction=tf.keras.losses.Reduction.NONE)}
   beta = 1.0 / (300.0*unit.kelvin * unit.MOLAR_GAS_CONSTANT_R).value_in_unit(unit.kilojoules_per_mole)
@@ -265,7 +269,7 @@ else:
 #Can write trajectory, but for now only with lattice gas
 if write_traj:
   outDat, steps_nc, U_nc, config_nc, biasVals_nc = createDataFile('LG_2D_traj.nc', 28)
-  write_freq = 5
+  write_freq = 50
 
 #Load weights now
 vaeModel.load_weights(weights_file)
@@ -292,7 +296,7 @@ move_types = [mc_moves.moveVAE, #mc_moves.moveVAEbiased
 move_probs = [1.0, 0.0, 0.0, 0.0]
 
 #Set up statistics
-num_steps = 1000
+num_steps = 10000
 move_counts = np.zeros((num_parallel, len(move_types)))
 num_acc = np.zeros((num_parallel, len(move_types)))
 if move_probs[0] > 0.0:
