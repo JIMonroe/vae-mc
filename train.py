@@ -3,6 +3,7 @@
 """Functions for training a VAE model, including compiling models.
 """
 
+import gc
 import os
 import time
 import copy
@@ -199,12 +200,12 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #  del unusedData
   #else:
   #  trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
-  #trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
-  #                                               dset='all', permute=True, center_and_whiten=True)
+  trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
+                                                 dset='all', permute=True, center_and_whiten=True)
   #trainData = dataloaders.raw_image_data(data_file)
   #trainData, valData = dataloaders.dsprites_data(batch_size, val_frac=0.01)
   #trainData, valData = dataloaders.ala_dipeptide_data(data_file, batch_size, val_frac=0.05, rigid_bonds=True, sin_cos=False)
-  trainData, valData = dataloaders.polymer_data(data_file, batch_size, val_frac=0.05, rigid_bonds=True, sin_cos=False)
+  #trainData, valData = dataloaders.polymer_data(data_file, batch_size, val_frac=0.05, rigid_bonds=True, sin_cos=False)
 
   #Set up path for checkpoint files
   checkpoint_path = os.path.join(save_dir, 'training.ckpt')
@@ -294,6 +295,8 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
               %(step, loss, sum(model.losses), 
                 model.metrics[0].result(), model.metrics[1].result(), extra_loss))
 
+      gc.collect()
+
     #Save checkpoint after each epoch
     print('\tEpoch finished, saving checkpoint.')
     model.save_weights(checkpoint_path.format(epoch=epoch))
@@ -313,6 +316,7 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
         val_loss += extraLossWeight*extra_loss
         val_extra_loss += extra_loss
       batchCount += 1.0
+      gc.collect()
     val_loss /= batchCount
     val_extra_loss /= batchCount
     print('\tValidation loss=%f, model_loss=%f, kl_div=%f, reg_loss=%f, extra_loss=%f'
