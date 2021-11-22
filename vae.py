@@ -403,8 +403,17 @@ their paper 'Variational Lossy Autoencoder.'
     if self.beta != 0.0:
       #This works with current style of VAE (beta-VAE), but if switch, may not
       z_prior, logdet = self.flow(z, reverse=True)
-      #Estimate the KL divergence - should return average KL over batch
-      kl_loss = losses.estimate_gaussian_kl(z_prior, z, z_mean, z_logvar)
+      #How handle loss for flow/KL divergence depends on if sampling in latent space
+      #i.e., if have VAE or regular AE
+      if self.sample_latent:
+        #Estimate the KL divergence - should return average KL over batch
+        kl_loss = losses.estimate_gaussian_kl(z_prior, z, z_mean, z_logvar)
+      else:
+        #Estimate (negative) log likelihood of the prior
+        #Just training flow here, completely separate from regular AE model and its loss
+        kl_loss = tf.reduce_mean(0.5*tf.reduce_sum(tf.square(z_prior)
+                                                   + tf.math.log(2.0*math.pi),
+                                                   axis=1))
       #And SUBTRACT the average log determinant for the flow transformation
       kl_loss -= tf.reduce_mean(logdet)
     else:
