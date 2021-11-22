@@ -188,6 +188,8 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
 
   print("Model set up and ready to train.")
 
+  #FOR LOADING DATA, MUST UNCOMMENT/MODIFY dataloader OPERATION BELOW!
+  #SHOULD MOVE THIS OUTSIDE TRAINING FUNCTION AND PASS AS INPUT TO BE MORE GENERAL!
   #Want to load in data
   #Can actually just give numpy arrays to the Model.fit function in tf.keras
   #So could just load .nc files directly
@@ -218,6 +220,8 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
                                       )
 
   #Specify the loss function we want to use
+  #AutoregressiveLoss should work for everything if using autoregression
+  #Otherwise, need to specify correct loss function depending on loaded data
   #loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True,
   #                                reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = tf.keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)

@@ -40,11 +40,6 @@ class FCEncoder(tf.keras.layers.Layer):
   Concepts with a Constrained Variational Framework"
   (https://openreview.net/forum?id=Sy2fzU9gl).
 
-  Args:
-    input_tensor: Input tensor of shape (batch_size, 64, 64, num_channels) to
-      build encoder on.
-    num_latent: Number of latent variables to output.
-
   Returns:
     means: Output tensor of shape (batch_size, num_latent) with latent variable
       means.
@@ -167,19 +162,7 @@ class ConvEncoder(tf.keras.layers.Layer):
 
 
 class FCDecoder(tf.keras.layers.Layer):
-  """Fully connected encoder used in beta-VAE paper for the dSprites data.
-
-  Based on row 1 of Table 1 on page 13 of "beta-VAE: Learning Basic Visual
-  Concepts with a Constrained Variational Framework"
-  (https://openreview.net/forum?id=Sy2fzU9gl)
-
-  Args:
-    latent_tensor: Input tensor to connect decoder to.
-    out_shape: Shape of the data.
-
-  Returns:
-    Output tensor of shape (None, 64, 64, num_channels) with the [0,1] pixel
-    intensities.
+  """Fully connected decoder
   """
 
   def __init__(self, out_shape, name='decoder',
