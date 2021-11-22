@@ -315,6 +315,7 @@ their paper 'Variational Lossy Autoencoder.'
                n_auto_group=1,
                truncate_norm=False,
                periodic_dof_inds=[],
+               sample_latent=True,
                **kwargs):
     super(PriorFlowVAE, self).__init__(name=name, **kwargs)
     self.data_shape = data_shape
@@ -325,6 +326,7 @@ their paper 'Variational Lossy Autoencoder.'
     self.e_hidden_dim = e_hidden_dim
     self.f_hidden_dim = f_hidden_dim
     self.d_hidden_dim = d_hidden_dim
+    self.sample_latent = True
     #By default, use fully-connect (fc) architecture for neural nets
     #Can switch to convolutional if specify arch='conv' (won't have flow, though)
     self.arch = arch
@@ -382,7 +384,11 @@ their paper 'Variational Lossy Autoencoder.'
 
   def call(self, inputs, training=False):
     z_mean, z_logvar = self.encoder(inputs)
-    z = self.sampler(z_mean, z_logvar)
+    #To allow regular autoencoder, can set sample_latent to False
+    if self.sample_latent:
+      z = self.sampler(z_mean, z_logvar)
+    else:
+      z = z_mean + z_logvar #Add together to keep same encoder size but use info differently
     #With flow only on prior, z passes directly through
     if self.autoregress and training:
       reconstructed = self.decoder(z, train_data=inputs)
