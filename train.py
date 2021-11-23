@@ -932,13 +932,14 @@ def trainRawData(model, raw_data, weight_file,
         loss = loss_fn(batch_train, reconstructed) / batch_train.shape[0]
         loss += sum(model.losses)
 
+      grads = tape.gradient(loss, model.trainable_weights)
+
       #Check for NaNs or Infs - will throw error and break if happens!
       #But model will still be saved from last stable version
       tf.debugging.assert_all_finite(loss, 'NaN or Inf in loss!')
       for g in grads:
         tf.debugging.assert_all_finite(g, 'NaN or Inf in gradients!')
 
-      grads = tape.gradient(loss, model.trainable_weights)
       optimizer.apply_gradients(zip(grads, model.trainable_weights))
 
       if step%100 == 0:
@@ -978,5 +979,77 @@ def trainRawData(model, raw_data, weight_file,
     model.save_weights(weight_file)
 
   return np.array(loss_info)
+
+
+def trainFlowOnly(model, raw_data, weight_file,
+                  num_epochs=100,
+                  batch_size=200):
+
+  """
+  Trains only the flow on a prior for an autoencoder model. Useful if you have set beta to
+  zero or are training a regular AE and want to still estimate the distribution of z with a
+  flow.
+
+  Inputs:
+      model - VAE model to train
+      raw_data - raw data to use for training (numpy array or tensor)
+      weight_file - file to save weights to
+      num_epochs - (100) number of epochs
+      batch_size - (200) batch size
+  Outputs:
+      Saves model weights to the specified file name
+  """
+
+  optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001,
+                                       beta_1=0.9,
+                                       beta_2=0.999,
+                                       epsilon=1e-08)
+
+  train_data = tf.data.Dataset.from_tensor_slices(raw_data)
+  train_data = train_data.shuffle(buffer_size=3*batch_size).batch(batch_size, drop_remainder=True)
+
+  for epoch in range(num_epochs):
+
+    print("Epoch %i:"%(epoch))
+
+    for step, batch_train in enumerate(train_data):
+
+      #Sample from encoding distribution
+      z_means, z_logvars = model.encoder(batch_train)
+      if model.sample_latent:
+        z = model.sampler(z_means, z_logvars)
+      #Unless just regular AE
+      else:
+        z = z_means + z_logvars
+
+      #Now do flow only within gradient tape
+      with tf.GradientTape() as tape:
+        tz, logdet = model.flow(z, reverse=True)
+        #Estimate (negative) log likelihood of the prior under flow
+        #Just training flow here, completely separate from rest of model
+        loss = tf.reduce_mean(0.5*tf.reduce_sum(tf.square(z_prior)
+                                                 + tf.math.log(2.0*math.pi),
+                                                 axis=1))
+        #And SUBTRACT the average log determinant for the flow transformation
+        loss -= tf.reduce_mean(logdet)
+
+      grads = tape.gradient(loss, model.flow.trainable_weights)
+
+      #Check for NaNs or Infs - will throw error and break if happens!
+      #But model will still be saved from last stable version
+      tf.debugging.assert_all_finite(loss, 'NaN or Inf in loss!')
+      for g in grads:
+        tf.debugging.assert_all_finite(g, 'NaN or Inf in gradients!')
+
+      optimizer.apply_gradients(zip(grads, model.flow.trainable_weights))
+
+      if step%100 == 0:
+        print('\tStep %i: loss=%f'
+              %(step, loss)) 
+        model.save_weights(weight_file)
+
+      gc.collect()
+
+    model.save_weights(weight_file)
 
 
