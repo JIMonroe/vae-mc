@@ -858,3 +858,125 @@ def trainSrelCG(model,
   #print(train_history.history)
 
 
+def trainRawData(model, raw_data, weight_file,
+                 num_epochs=100,
+                 batch_size=200,
+                 anneal_beta_val=None,
+                 anneal_epochs=20):
+
+  """
+  Simple training routine for VAE model with checks for NaNs and periodic saving of weights.
+
+  Inputs:
+      model - VAE model to train
+      raw_data - raw data to use for training (numpy array or tensor)
+      weight_file - file to save weights to
+      num_epochs - (100) number of epochs
+      batch_size - (200) batch size
+      anneal_beta_val - (None) final value to anneal to for weight on KL term (beta)
+      anneal_epochs - (20) number epochs to anneal over (after this many, reach final value)
+  Outputs:
+      loss_info - array of loss info at end of each epoch, order of columns being
+                  (loss, recon, KL, val_loss, val_recon, val_KL)
+      Also saves model weights to the specified file name
+  """
+
+  optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001,
+                                       beta_1=0.9,
+                                       beta_2=0.999,
+                                       epsilon=1e-08)
+
+  if model.autoregress:
+    loss_fn = losses.AutoregressiveLoss(model.decoder,
+                                          reduction=tf.keras.losses.Reduction.SUM)
+  else:
+    loss_fn = losses.ReconLoss(loss_fn=losses.diag_gaussian_loss, activation=None,
+                               reduction=tf.keras.losses.Reduction.SUM)
+
+  val_frac = 0.05
+  val_ind = int((1.0 - val_frac)*raw_data.shape[0])
+  train_data = tf.data.Dataset.from_tensor_slices(raw_data[:val_ind])
+  train_data = train_data.shuffle(buffer_size=3*batch_size).batch(batch_size, drop_remainder=True)
+  val_data = tf.data.Dataset.from_tensor_slices(raw_data[val_ind:])
+  val_data = val_data.batch(batch_size)
+
+  if anneal_beta_val is not None:
+    try:
+      original_beta = copy.deepcopy(model.beta)
+    except AttributeError:
+      print("Annealing turned on but model has no beta parameter, turning off.")
+      anneal_beta_val = None
+    #Catch case if anneal_beta_val is same as original_beta
+    if anneal_beta_val == original_beta:
+      anneal_beta_val = None
+
+  loss_info = []
+
+  for epoch in range(num_epochs):
+
+    if anneal_beta_val is not None and epoch < anneal_epochs:
+      model.beta = original_beta + (anneal_beta_val - original_beta)*epoch/(anneal_epochs - 1)
+
+    print("Epoch %i (beta=%f):"%(epoch, model.beta))
+
+    for step, batch_train in enumerate(train_data):
+
+      for ametric in model.metrics:
+        ametric.reset_states()
+
+      with tf.GradientTape() as tape:
+        reconstructed = model(batch_train, training=True)
+        #If not including variances in model prediction, pass zeros for log-variances
+        if not model.include_vars:
+          reconstructed = (reconstructed, tf.zeros_like(reconstructed))
+        loss = loss_fn(batch_train, reconstructed) / batch_train.shape[0]
+        loss += sum(model.losses)
+
+      #Check for NaNs or Infs - will throw error and break if happens!
+      #But model will still be saved from last stable version
+      tf.debugging.assert_all_finite(loss, 'NaN or Inf in loss!')
+      for g in grads:
+        tf.debugging.assert_all_finite(g, 'NaN or Inf in gradients!')
+
+      grads = tape.gradient(loss, model.trainable_weights)
+      optimizer.apply_gradients(zip(grads, model.trainable_weights))
+
+      if step%100 == 0:
+        print('\tStep %i: loss=%f, model_loss=%f, kl_div=%f, reg_loss=%f'
+              %(step, loss, sum(model.losses),
+                model.metrics[0].result(), model.metrics[1].result()))
+        model.save_weights(weight_file)
+
+      gc.collect()
+
+    #Store loss information
+    this_loss_info = [loss.numpy(),
+                      (loss - sum(model.losses)).numpy(),
+                      model.metrics[0].result().numpy()]
+
+    #Check against validation data
+    val_loss = tf.constant(0.0)
+    for ametric in model.metrics:
+      ametric.reset_states()
+    batch_count = 0
+    for batch_val in val_data:
+      reconstructed = model(batch_val, training=True)
+      val_loss += loss_fn(batch_val, reconstructed)
+      val_loss += sum(model.losses)*batch_val.shape[0]
+      batch_count += batch_val.shape[0]
+      gc.collect()
+    val_loss /= batch_count
+    print('\tValidation loss=%f, model_loss=%f, kl_div=%f, reg_loss=%f'
+          %(val_loss, sum(model.losses),
+            model.metrics[0].result(), model.metrics[1].result()))
+
+    this_loss_info.extend([val_loss.numpy(),
+                           (val_loss - sum(model.losses)).numpy(),
+                           model.metrics[0].result().numpy()])
+    loss_info.append(this_loss_info)
+
+    model.save_weights(weight_file)
+
+  return np.array(loss_info)
+
+
