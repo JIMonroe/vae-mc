@@ -1027,8 +1027,8 @@ def trainFlowOnly(model, raw_data, weight_file,
         tz, logdet = model.flow(z, reverse=True)
         #Estimate (negative) log likelihood of the prior under flow
         #Just training flow here, completely separate from rest of model
-        loss = tf.reduce_mean(0.5*tf.reduce_sum(tf.square(z_prior)
-                                                 + tf.math.log(2.0*math.pi),
+        loss = tf.reduce_mean(0.5*tf.reduce_sum(tf.square(tz)
+                                                 + tf.math.log(2.0*np.pi),
                                                  axis=1))
         #And SUBTRACT the average log determinant for the flow transformation
         loss -= tf.reduce_mean(logdet)
