@@ -304,7 +304,8 @@ def getClusterInfo(conf, connectivity=None, showPlot=False):
   return np.array(clustSizeUn), np.array(clustSizeOc)
 
 
-#Analysis to examine properties of the latent space
+#Analyses to examine properties of the latent space
+#All before and in LatentAnalysis class assume have trained prior flow in VAE
 def utilized_latent_dims(z_means, z_logvars):
     """
     Assuming multivariate Gaussian encoding distributions with diagonal covariance matrix (independent
@@ -349,6 +350,9 @@ def utilized_latent_dims(z_means, z_logvars):
         #(or N*N - N, all pairs minus diagonal)
         jd.append(tf.reduce_sum(JD_mat)
                   / tf.cast(tf.shape(z_means)[0]**2 - tf.shape(z_means)[0], dtype=JD_mat.dtype))
+
+    if len(jd) == 1:
+        jd = [jd]
 
     return tf.concat(jd, axis=0)
 
@@ -543,31 +547,43 @@ class LatentAnalysis(object):
 
         #Perform all analyses
         #Need samples for some analyses
-        z_sample = self.vae_model.sampler(this_z_means, this_z_logvars)
+        #And make sure if using regular AE, don't actually sample
+        if self.vae_model.sample_latent:
+            z_sample = self.vae_model.sampler(this_z_means, this_z_logvars)
+        else:
+            z_sample = this_z_means + this_z_logvars
 
         #Do analyses that require batching (to prevent overflows)
-        batch_size = 500
-        qzx_jd_per_dim = []
-        qz_tot_corr_tcvae = []
-        num_batch = []
-        for i in range(0, tf.shape(this_z_means)[0], batch_size):
-            start = i
-            end = i+batch_size
-            qzx_jd_per_dim.append(utilized_latent_dims(this_z_means[start:end],
-                                                       this_z_logvars[start:end]))
-            qz_tot_corr_tcvae.append(total_corr_TCVAE(z_sample[start:end],
-                                                      this_z_means[start:end],
-                                                      this_z_logvars[start:end]))
-            num_batch.append(tf.cast(tf.shape(this_z_means[start:end])[0], this_z_means.dtype))
-        num_batch = tf.stack(num_batch)
-        batch_weights = num_batch / tf.reduce_sum(num_batch)
-        qzx_jd_per_dim = tf.stack(qzx_jd_per_dim)
-        qz_tot_corr_tcvae = tf.stack(qz_tot_corr_tcvae)
-        qzx_jd_per_dim_mean = tf.reduce_sum(qzx_jd_per_dim*tf.reshape(batch_weights, (-1, 1)), axis=0)
-        qz_tot_corr_tcvae_mean = tf.reduce_sum(qz_tot_corr_tcvae*batch_weights)
-        #Batching accounts for large part of uncertainty in these quantities, so estimate and return
-        qzx_jd_per_dim_var = tf.reduce_sum(tf.square(qzx_jd_per_dim - qzx_jd_per_dim_mean)*tf.reshape(batch_weights, (-1, 1)), axis=0)
-        qz_tot_corr_tcvae_var = tf.reduce_sum(tf.square(qz_tot_corr_tcvae - qz_tot_corr_tcvae_mean)*batch_weights)
+        #But skip if standard autoencoder because requires means and logvars of q(z|x)
+        if self.vae_model.sample_latent:
+            batch_size = 500
+            qzx_jd_per_dim = []
+            qz_tot_corr_tcvae = []
+            num_batch = []
+            for i in range(0, tf.shape(this_z_means)[0], batch_size):
+                start = i
+                end = i+batch_size
+                qzx_jd_per_dim.append(utilized_latent_dims(this_z_means[start:end],
+                                                           this_z_logvars[start:end]))
+                qz_tot_corr_tcvae.append(total_corr_TCVAE(z_sample[start:end],
+                                                          this_z_means[start:end],
+                                                          this_z_logvars[start:end]))
+                num_batch.append(tf.cast(tf.shape(this_z_means[start:end])[0], this_z_means.dtype))
+            num_batch = tf.stack(num_batch)
+            batch_weights = num_batch / tf.reduce_sum(num_batch)
+            qzx_jd_per_dim = tf.stack(qzx_jd_per_dim)
+            qz_tot_corr_tcvae = tf.stack(qz_tot_corr_tcvae)
+            qzx_jd_per_dim_mean = tf.reduce_sum(qzx_jd_per_dim*tf.reshape(batch_weights, (-1, 1)), axis=0)
+            qz_tot_corr_tcvae_mean = tf.reduce_sum(qz_tot_corr_tcvae*batch_weights)
+            #Batching accounts for large part of uncertainty in these quantities, so estimate and return
+            qzx_jd_per_dim_var = tf.reduce_sum(tf.square(qzx_jd_per_dim - qzx_jd_per_dim_mean)*tf.reshape(batch_weights, (-1, 1)), axis=0)
+            qz_tot_corr_tcvae_var = tf.reduce_sum(tf.square(qz_tot_corr_tcvae - qz_tot_corr_tcvae_mean)*batch_weights)
+        #Can't compute these metrics with standard AE
+        else:
+            qzx_jd_per_dim_mean = tf.constant(np.nan)
+            qz_tot_corr_tcvae_mean = tf.constant(np.nan)
+            qzx_jd_per_dim_var = tf.constant(np.nan)
+            qz_tot_corr_tcvae_var = tf.constant(np.nan)
         #print('Checked utilized latent dims')
         #print('Checked total correlation')
 
@@ -597,9 +613,9 @@ class LatentAnalysis(object):
         out_vars = (qzx_jd_per_dim_var, qz_tot_corr_tcvae_var)
         return out_means, out_vars
 
-    def bootstrap(self, n_boot=100):
+    def _bootstrap_(self, n_boot=100):
         """
-        Function to bootstrap the analysis, re-running _all_analyses_ for each boostrap.
+        Function to bootstrap the analysis, re-running _all_analyses_ for each bootstrap.
 
         Inputs:
                 n_boot - (100) number of bootstrap samples to generate and analyze
@@ -647,7 +663,7 @@ class LatentAnalysis(object):
         """
         #Perform analysis and store results in self.results dictionary
         if bootstrap:
-            result = self.bootstrap(n_boot=n_boot)
+            result = self._bootstrap_(n_boot=n_boot)
             self.results = {**self.results, **dict(zip(self.result_keys, result[0]))}
             self.results['uncertainty'] = {**self.results['uncertainty'], **dict(zip(self.result_keys, result[1]))}
             #Correct uncertainties for batched analyses to include batch variance

@@ -326,7 +326,7 @@ their paper 'Variational Lossy Autoencoder.'
     self.e_hidden_dim = e_hidden_dim
     self.f_hidden_dim = f_hidden_dim
     self.d_hidden_dim = d_hidden_dim
-    self.sample_latent = True
+    self.sample_latent = sample_latent
     #By default, use fully-connect (fc) architecture for neural nets
     #Can switch to convolutional if specify arch='conv' (won't have flow, though)
     self.arch = arch
