@@ -136,21 +136,24 @@ def train(model,
 
 
 def trainCustom(model,
-                data_file,
+                trainData,
+                valData,
+                loss_fn,
                 num_epochs=2,
                 batch_size=64,
                 save_dir='vae_info',
                 overwrite=False,
                 extraLossFunc=None,
                 extraLossWeight=1.0,
-                anneal_beta_val=None,
-                val_file=None):
+                anneal_beta_val=None):
   """Trains a VAE model and saves the results in a way that the model can be fully reloaded.
 Uses a custom training loop rather than those built into the tf.keras.Model class.
 
   Args:
     model: the VAE model object to train and save
-    data_file: a file containing the data for training/validation
+    trainData: training data (should be tf dataset object, follow dataloaders)
+    valData: validation data
+    loss_fn: loss function to use for training (keras.losses class)
     num_epochs: Integer with number of epochs to train (each is over all samples)
     batch_size: Integer with the batch size
     save_dir: String with path to directory to save to
@@ -188,6 +191,9 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
 
   print("Model set up and ready to train.")
 
+  #Use to have to modify code to modify data and loss function
+  #Commented out below is leftover from that time
+
   #FOR LOADING DATA, MUST UNCOMMENT/MODIFY dataloader OPERATION BELOW!
   #SHOULD MOVE THIS OUTSIDE TRAINING FUNCTION AND PASS AS INPUT TO BE MORE GENERAL!
   #Want to load in data
@@ -202,8 +208,8 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #  del unusedData
   #else:
   #  trainData, valData = dataloaders.image_data(data_file, batch_size, val_frac=0.05)
-  trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
-                                                 dset='all', permute=True, center_and_whiten=True)
+  #trainData, valData = dataloaders.dimer_2D_data(data_file, batch_size, val_frac=0.05,
+  #                                               dset='all', permute=True, center_and_whiten=True)
   #trainData = dataloaders.raw_image_data(data_file)
   #trainData, valData = dataloaders.dsprites_data(batch_size, val_frac=0.01)
   #trainData, valData = dataloaders.ala_dipeptide_data(data_file, batch_size, val_frac=0.05, rigid_bonds=True, sin_cos=False)
@@ -219,6 +225,8 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
                                        epsilon=1e-08,
                                       )
 
+  #loss_fn is now passed in, below is leftover from before that was the case
+
   #Specify the loss function we want to use
   #AutoregressiveLoss should work for everything if using autoregression
   #Otherwise, need to specify correct loss function depending on loaded data
@@ -229,8 +237,8 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #loss_fn = losses.diag_gaussian_loss
   #loss_fn = losses.ReconLoss(loss_fn=losses.diag_gaussian_loss, activation=None,
   #                           reduction=tf.keras.losses.Reduction.SUM)
-  loss_fn = losses.AutoregressiveLoss(model.decoder,
-                                      reduction=tf.keras.losses.Reduction.SUM)
+  #loss_fn = losses.AutoregressiveLoss(model.decoder,
+  #                                    reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = losses.AutoConvLoss(model.decoder,
   #                              reduction=tf.keras.losses.Reduction.SUM)
 
