@@ -138,9 +138,8 @@ def train(model,
 def trainCustom(model,
                 trainData,
                 valData,
-                loss_fn,
+                loss_fn=None,
                 num_epochs=2,
-                batch_size=64,
                 save_dir='vae_info',
                 overwrite=False,
                 extraLossFunc=None,
@@ -155,7 +154,6 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
     valData: validation data
     loss_fn: loss function to use for training (keras.losses class)
     num_epochs: Integer with number of epochs to train (each is over all samples)
-    batch_size: Integer with the batch size
     save_dir: String with path to directory to save to
     overwrite: Boolean determining whether data is overwritten
     extraLossFunc: Additional loss function to add (for example potential energies)
@@ -225,7 +223,10 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
                                        epsilon=1e-08,
                                       )
 
-  #loss_fn is now passed in, below is leftover from before that was the case
+  #loss_fn can now be passed in, but in many cases just want autoregressive
+  #Since with autoregressive it's based on specific model, just do that as default
+  #Gives flexibility of loss function without having to bother to match to model outside
+  #of training function
 
   #Specify the loss function we want to use
   #AutoregressiveLoss should work for everything if using autoregression
@@ -237,8 +238,9 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
   #loss_fn = losses.diag_gaussian_loss
   #loss_fn = losses.ReconLoss(loss_fn=losses.diag_gaussian_loss, activation=None,
   #                           reduction=tf.keras.losses.Reduction.SUM)
-  #loss_fn = losses.AutoregressiveLoss(model.decoder,
-  #                                    reduction=tf.keras.losses.Reduction.SUM)
+  if loss_fn is None:
+    loss_fn = losses.AutoregressiveLoss(model.decoder,
+                                        reduction=tf.keras.losses.Reduction.SUM)
   #loss_fn = losses.AutoConvLoss(model.decoder,
   #                              reduction=tf.keras.losses.Reduction.SUM)
 
