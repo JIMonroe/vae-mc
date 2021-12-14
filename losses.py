@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Library of basic reconstruction and ELBO loss functions for VAEs.
+"""Library of loss functions for VAEs, including energies for physical systems.
 Can also use these functions as metrics in keras models.
 Adapted from disentanglement_lib https://github.com/google-research/disentanglement_lib"""
 import copy

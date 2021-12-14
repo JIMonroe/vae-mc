@@ -34,11 +34,7 @@ class SampleLatent(tf.keras.layers.Layer):
 
 
 class FCEncoder(tf.keras.layers.Layer):
-  """Fully connected encoder used in beta-VAE paper for the dSprites data.
-
-  Based on row 1 of Table 1 on page 13 of "beta-VAE: Learning Basic Visual
-  Concepts with a Constrained Variational Framework"
-  (https://openreview.net/forum?id=Sy2fzU9gl).
+  """Fully connected encoder 
 
   Modified to account for periodic degrees of freedom (convert to sine-cosine pairs)
   if there are any specified.
@@ -89,7 +85,8 @@ class FCEncoder(tf.keras.layers.Layer):
 
 
 class ConvEncoder(tf.keras.layers.Layer):
-  """Convolutional encoder used in beta-VAE paper for the chairs data.
+  """Directly from disentanglement_lib
+  Convolutional encoder used in beta-VAE paper for the chairs data.
 
   Based on row 3 of Table 1 on page 13 of "beta-VAE: Learning Basic Visual
   Concepts with a Constrained Variational Framework"
@@ -204,7 +201,8 @@ class FCDecoder(tf.keras.layers.Layer):
 
 
 class DeconvDecoder(tf.keras.layers.Layer):
-  """Convolutional decoder used in beta-VAE paper for the chairs data.
+  """Directly from disentanglement_lib
+  Convolutional decoder used in beta-VAE paper for the chairs data.
 
   Based on row 3 of Table 1 on page 13 of "beta-VAE: Learning Basic Visual
   Concepts with a Constrained Variational Framework"
