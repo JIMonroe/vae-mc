@@ -13,8 +13,7 @@
 # limitations under the License.
 
 """
-Implementation of VAE based models for unsupervised learning of disentangled
-representations.
+Implementation of VAE based models
 Adapted from disentanglement_lib https://github.com/google-research/disentanglement_lib
 """
 

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Library of neural network architectures used for constructing VAEs for images.
+"""Library of neural network architectures used for constructing VAEs
 Adapted from disentanglement_lib https://github.com/google-research/disentanglement_lib"""
 import copy
 import numpy as np
@@ -39,6 +39,9 @@ class FCEncoder(tf.keras.layers.Layer):
   Based on row 1 of Table 1 on page 13 of "beta-VAE: Learning Basic Visual
   Concepts with a Constrained Variational Framework"
   (https://openreview.net/forum?id=Sy2fzU9gl).
+
+  Modified to account for periodic degrees of freedom (convert to sine-cosine pairs)
+  if there are any specified.
 
   Returns:
     means: Output tensor of shape (batch_size, num_latent) with latent variable
