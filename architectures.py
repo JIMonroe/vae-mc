@@ -1,18 +1,6 @@
-# Copyright 2020 Jacob I. Monroe, NIST Employee  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Written in 2020 by Jacob I. Monroe, NIST Employee
 
-"""Library of neural network architectures used for constructing VAEs for images.
+"""Library of neural network architectures used for constructing VAEs
 Adapted from disentanglement_lib https://github.com/google-research/disentanglement_lib"""
 import copy
 import numpy as np
@@ -34,11 +22,10 @@ class SampleLatent(tf.keras.layers.Layer):
 
 
 class FCEncoder(tf.keras.layers.Layer):
-  """Fully connected encoder used in beta-VAE paper for the dSprites data.
+  """Fully connected encoder 
 
-  Based on row 1 of Table 1 on page 13 of "beta-VAE: Learning Basic Visual
-  Concepts with a Constrained Variational Framework"
-  (https://openreview.net/forum?id=Sy2fzU9gl).
+  Modified to account for periodic degrees of freedom (convert to sine-cosine pairs)
+  if there are any specified.
 
   Returns:
     means: Output tensor of shape (batch_size, num_latent) with latent variable
@@ -86,7 +73,8 @@ class FCEncoder(tf.keras.layers.Layer):
 
 
 class ConvEncoder(tf.keras.layers.Layer):
-  """Convolutional encoder used in beta-VAE paper for the chairs data.
+  """Directly from disentanglement_lib
+  Convolutional encoder used in beta-VAE paper for the chairs data.
 
   Based on row 3 of Table 1 on page 13 of "beta-VAE: Learning Basic Visual
   Concepts with a Constrained Variational Framework"
@@ -201,7 +189,8 @@ class FCDecoder(tf.keras.layers.Layer):
 
 
 class DeconvDecoder(tf.keras.layers.Layer):
-  """Convolutional decoder used in beta-VAE paper for the chairs data.
+  """Directly from disentanglement_lib
+  Convolutional decoder used in beta-VAE paper for the chairs data.
 
   Based on row 3 of Table 1 on page 13 of "beta-VAE: Learning Basic Visual
   Concepts with a Constrained Variational Framework"

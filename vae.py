@@ -1,20 +1,7 @@
-# Copyright 2020 Jacob I. Monroe, NIST Employee  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Written in 2020 by Jacob I. Monroe, NIST Employee
 
 """
-Implementation of VAE based models for unsupervised learning of disentangled
-representations.
+Implementation of VAE based models
 Adapted from disentanglement_lib https://github.com/google-research/disentanglement_lib
 """
 
@@ -64,7 +51,9 @@ class BaseVAE(tf.keras.Model):
 
 
 class BetaVAE(BaseVAE):
-  """BetaVAE model."""
+  """BetaVAE model.
+  Minor modification on disentanglement_lib
+  """
 
   def __init__(self, data_shape, num_latent, beta=6.0, name='beta_vae', **kwargs):
     """Creates a beta-VAE model.
@@ -88,7 +77,8 @@ class BetaVAE(BaseVAE):
 
 
 def compute_covariance_z_mean(z_mean):
-  """Computes the covariance of z_mean.
+  """Directly from disentanglement_lib
+  Computes the covariance of z_mean.
 
   Uses cov(z_mean) = E[z_mean*z_mean^T] - E[z_mean]E[z_mean]^T.
 
@@ -110,7 +100,8 @@ def compute_covariance_z_mean(z_mean):
 
 
 def regularize_diag_off_diag_dip(covariance_matrix, lambda_od, lambda_d):
-  """Compute on and off diagonal regularizers for DIP-VAE models.
+  """Directly from disentanglement_lib
+  Compute on and off diagonal regularizers for DIP-VAE models.
 
   Penalize deviations of covariance_matrix from the identity matrix. Uses
   different weights for the deviations of the diagonal and off diagonal entries.
@@ -133,7 +124,9 @@ def regularize_diag_off_diag_dip(covariance_matrix, lambda_od, lambda_d):
 
 
 class DIPVAE(BaseVAE):
-  """DIPVAE model."""
+  """DIPVAE model.
+  Minor modification on disentanglement_lib
+  """
 
   def __init__(self, data_shape, num_latent, lambda_od=20.0, lambda_d_factor=1.0, dip_type="ii", name='dip_vae', **kwargs):
     """Creates a DIP-VAE model.
@@ -182,7 +175,8 @@ def gaussian_log_density(samples, mean, log_var):
 
 
 def total_correlation(z, z_mean, z_logvar):
-  """Estimate of total correlation on a batch.
+  """Directly from disentanglement_lib
+  Estimate of total correlation on a batch.
 
   We need to compute the expectation over a batch of: E_j [log(q(z(x_j))) -
   log(prod_l q(z(x_j)_l))]. We ignore the constants as they do not matter
@@ -220,7 +214,9 @@ def total_correlation(z, z_mean, z_logvar):
 
 
 class BetaTCVAE(BaseVAE):
-  """BetaTCVAE model."""
+  """BetaTCVAE model.
+  Minor modification on disentanglement_lib
+  """
 
   def __init__(self, data_shape, num_latent, beta=6.0, name='beta_tc_vae', **kwargs):
     """Creates a beta-TC-VAE model.
