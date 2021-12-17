@@ -63,7 +63,9 @@ class BaseVAE(tf.keras.Model):
 
 
 class BetaVAE(BaseVAE):
-  """BetaVAE model."""
+  """BetaVAE model.
+  Minor modification on disentanglement_lib
+  """
 
   def __init__(self, data_shape, num_latent, beta=6.0, name='beta_vae', **kwargs):
     """Creates a beta-VAE model.
@@ -87,7 +89,8 @@ class BetaVAE(BaseVAE):
 
 
 def compute_covariance_z_mean(z_mean):
-  """Computes the covariance of z_mean.
+  """Directly from disentanglement_lib
+  Computes the covariance of z_mean.
 
   Uses cov(z_mean) = E[z_mean*z_mean^T] - E[z_mean]E[z_mean]^T.
 
@@ -109,7 +112,8 @@ def compute_covariance_z_mean(z_mean):
 
 
 def regularize_diag_off_diag_dip(covariance_matrix, lambda_od, lambda_d):
-  """Compute on and off diagonal regularizers for DIP-VAE models.
+  """Directly from disentanglement_lib
+  Compute on and off diagonal regularizers for DIP-VAE models.
 
   Penalize deviations of covariance_matrix from the identity matrix. Uses
   different weights for the deviations of the diagonal and off diagonal entries.
@@ -132,7 +136,9 @@ def regularize_diag_off_diag_dip(covariance_matrix, lambda_od, lambda_d):
 
 
 class DIPVAE(BaseVAE):
-  """DIPVAE model."""
+  """DIPVAE model.
+  Minor modification on disentanglement_lib
+  """
 
   def __init__(self, data_shape, num_latent, lambda_od=20.0, lambda_d_factor=1.0, dip_type="ii", name='dip_vae', **kwargs):
     """Creates a DIP-VAE model.
@@ -181,7 +187,8 @@ def gaussian_log_density(samples, mean, log_var):
 
 
 def total_correlation(z, z_mean, z_logvar):
-  """Estimate of total correlation on a batch.
+  """Directly from disentanglement_lib
+  Estimate of total correlation on a batch.
 
   We need to compute the expectation over a batch of: E_j [log(q(z(x_j))) -
   log(prod_l q(z(x_j)_l))]. We ignore the constants as they do not matter
@@ -219,7 +226,9 @@ def total_correlation(z, z_mean, z_logvar):
 
 
 class BetaTCVAE(BaseVAE):
-  """BetaTCVAE model."""
+  """BetaTCVAE model.
+  Minor modification on disentanglement_lib
+  """
 
   def __init__(self, data_shape, num_latent, beta=6.0, name='beta_tc_vae', **kwargs):
     """Creates a beta-TC-VAE model.
