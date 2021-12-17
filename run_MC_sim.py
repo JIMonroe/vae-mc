@@ -63,11 +63,18 @@ def sincos(x, totDOFs):
 
 #Unlike sincos, unsincos just does one config at a time to work with bat_analysis
 def unsincos(x, totDOFs):
-  sin_vals = x[-2*(totDOFs//3 - 3):-(totDOFs//3 - 3)]
-  cos_vals = x[-(totDOFs//3 - 3):]
-  r_vals = np.sqrt(sin_vals**2 + cos_vals**2)
-  torsion_vals = np.arctan2(sin_vals/r_vals, cos_vals/r_vals)
-  out_x = np.concatenate([x[:-2*(totDOFs//3 - 3)], torsion_vals])
+  if len(x.shape) == 1:
+    sin_vals = x[-2*(totDOFs//3 - 3):-(totDOFs//3 - 3)]
+    cos_vals = x[-(totDOFs//3 - 3):]
+    r_vals = np.sqrt(sin_vals**2 + cos_vals**2)
+    torsion_vals = np.arctan2(sin_vals/r_vals, cos_vals/r_vals)
+    out_x = np.concatenate([x[:-2*(totDOFs//3 - 3)], torsion_vals])
+  else:
+    sin_vals = x[:, -2*(totDOFs//3 - 3):-(totDOFs//3 - 3)]
+    cos_vals = x[:, -(totDOFs//3 - 3):]
+    r_vals = np.sqrt(sin_vals**2 + cos_vals**2)
+    torsion_vals = np.arctan2(sin_vals/r_vals, cos_vals/r_vals)
+    out_x = np.concatenate([x[:, :-2*(totDOFs//3 - 3)], torsion_vals], axis=1)
   return out_x
 
 
@@ -98,19 +105,19 @@ if system_type == 'lg':
                     'logp_func':losses.bernoulli_loss}
   beta = 3.54 #1.60 #2.00 #1.77
   data = dataloaders.raw_image_data(dat_files)
-  #Should add command line option for saving to file, but instead adding flag here
-  write_traj = True
+  #Saving trajectory is special for lattice gas
+  outDat, steps_nc, U_nc, config_nc, biasVals_nc = createDataFile('LG_2D_traj.nc', 28)
 
 #If do add other systems, must set up energy functions for them as well!
 elif system_type == 'dimer':
   print("Setting up VAE for 2D particle dimer with latent dimension %i"%latent_dim)
-  #vaeModel = vae.PriorFlowVAE((76,), latent_dim, autoregress=True,
-  #                            include_vars=True, n_auto_group=2,
-  #                            e_hidden_dim=300,
-  #                            d_hidden_dim=300)
-  vaeModel = vae.FullFlowVAE((76,), latent_dim, n_auto_group=2,
-                            e_hidden_dim=300,
-                            d_hidden_dim=300)
+  vaeModel = vae.PriorFlowVAE((76,), latent_dim, autoregress=True,
+                              include_vars=True, n_auto_group=2,
+                              e_hidden_dim=300,
+                              d_hidden_dim=300)
+  #vaeModel = vae.FullFlowVAE((76,), latent_dim, n_auto_group=2,
+  #                          e_hidden_dim=300,
+  #                          d_hidden_dim=300)
 
   trajdict = np.load(dat_files[0], allow_pickle=True)
   data = np.vstack([trajdict['traj_open_hungarian'], trajdict['traj_closed_hungarian']])
@@ -125,8 +132,11 @@ elif system_type == 'dimer':
     scale = 1.0
   data /= scale
 
+  def transform(x, for_traj=False):
+    return (x*scale + shift)
+
   def cw_energy(conf):
-    return losses.dimerHamiltonian(conf*scale + shift).numpy()
+    return losses.dimerHamiltonian(transform(conf)).numpy()
 
   energy_func = cw_energy
   energy_params = {}
@@ -135,7 +145,7 @@ elif system_type == 'dimer':
                     'logp_func':losses.AutoregressiveLoss(vaeModel.decoder,
                                                    reduction=tf.keras.losses.Reduction.NONE)}
   beta = 1.00
-  write_traj = False
+  totDOFs = 76
 
 elif system_type == 'ala':
   print("Setting up VAE for dialanine with latent dimension %i"%latent_dim)
@@ -166,25 +176,35 @@ elif system_type == 'ala':
   bond_mask = np.ones(totDOFs, dtype=bool)
   bond_mask[bond_inds] = False
 
-  def transform(x):
+  def transform(x, for_traj=False):
     #Turn sine-cosine pairs back into dihedrals
     if 'sincos' in weights_file:
       x = unsincos(x, totDOFs)
     #Unmask
-    out_x = np.zeros(totDOFs)
-    out_x[bond_mask] = x
-    out_x[np.invert(bond_mask)] = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, #Rigid rotation and translation
-                                            1.01, 1.09, 1.09, 1.09, 1.09, 1.09, 1.09, 1.09, 1.01, 1.09, 1.09, 1.09])
-                                            #Bond lengths for masked bonds with hydrogens - NOT all same
-                                            #1.01 is for N-H and 1.09 is for C-H
-    #Convert from BAT to XYZ
-    out_x = bat_analysis.Cartesian(out_x)
+    if len(x.shape) == 1:
+      out_x = np.zeros(totDOFs)
+      out_x[bond_mask] = x
+      out_x[np.invert(bond_mask)] = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, #Rigid rotation and translation
+                                              1.01, 1.09, 1.09, 1.09, 1.09, 1.09, 1.09, 1.09, 1.01, 1.09, 1.09, 1.09])
+                                              #Bond lengths for masked bonds with hydrogens - NOT all same
+                                              #1.01 is for N-H and 1.09 is for C-H
+      if not for_traj:
+        #Convert from BAT to XYZ
+        out_x = bat_analysis.Cartesian(out_x)
+    else:
+      out_x = np.zeros((x.shape[0], totDOFs))
+      out_x[:, bond_mask] = x
+      out_x[:, np.invert(bond_mask)] = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                                1.01, 1.09, 1.09, 1.09, 1.09, 1.09, 1.09, 1.09, 1.01, 1.09, 1.09, 1.09])
+      if not for_traj:
+        for k, c in enumerate(out_x):
+          out_x[k] = bat_analysis.Cartesian(c)
     return out_x
 
   energy_func = losses.dialanineHamiltonian(transform_func=transform)
   energy_params = {}
   sampler_params = {'activation':None,
-                    'sampler_func':vaeModel.decoder.create_sample,
+                    'sampler_func':None, #vaeModel.decoder.create_sample,
                     'logp_func':losses.AutoregressiveLoss(vaeModel.decoder,
                                                    reduction=tf.keras.losses.Reduction.NONE)}
   beta = 1.0 / (300.0*unit.kelvin * unit.MOLAR_GAS_CONSTANT_R).value_in_unit(unit.kilojoules_per_mole)
@@ -199,15 +219,15 @@ elif 'poly' in system_type:
   print("Setting up VAE for polymer with latent dimension %i"%latent_dim)
   periodic_inds = list(range(-17, 0))
   if 'periodic' in weights_file:
-    #vaeModel = vae.PriorFlowVAE((35,), latent_dim, autoregress=True,
-    #                            include_vars=True, n_auto_group=1,
-    #                            periodic_dof_inds=periodic_inds,
-    #                            e_hidden_dim=300,
-    #                            d_hidden_dim=300)
-    vaeModel = vae.FullFlowVAE((35,), latent_dim, n_auto_group=1,
-                               periodic_dof_inds=periodic_inds,
-                               e_hidden_dim=300,
-                               d_hidden_dim=300)
+    vaeModel = vae.PriorFlowVAE((35,), latent_dim, autoregress=True,
+                                include_vars=True, n_auto_group=1,
+                                periodic_dof_inds=periodic_inds,
+                                e_hidden_dim=300,
+                                d_hidden_dim=300)
+    #vaeModel = vae.FullFlowVAE((35,), latent_dim, n_auto_group=1,
+    #                           periodic_dof_inds=periodic_inds,
+    #                           e_hidden_dim=300,
+    #                           d_hidden_dim=300)
   elif 'sincos' in weights_file:
     vaeModel = vae.PriorFlowVAE((52,), latent_dim, autoregress=True,
                                 include_vars=True, n_auto_group=1,
@@ -235,17 +255,27 @@ elif 'poly' in system_type:
   bond_mask = np.ones(totDOFs, dtype=bool)
   bond_mask[bond_inds] = False
 
-  def transform(x):
+  def transform(x, for_traj=False):
     #Turn sine-cosine pairs back into dihedrals
     if 'sincos' in weights_file:
       x = unsincos(x, totDOFs)
     #Unmask
-    out_x = np.zeros(totDOFs)
-    out_x[bond_mask] = x
-    out_x[np.invert(bond_mask)] = 1.54
-    out_x[:6] = np.zeros(6)
-    #Convert from BAT to XYZ
-    out_x = bat_analysis.Cartesian(out_x)
+    if len(x.shape) == 1:
+      out_x = np.zeros(totDOFs)
+      out_x[bond_mask] = x
+      out_x[np.invert(bond_mask)] = 1.54
+      out_x[:6] = np.zeros(6)
+      if not for_traj:
+        #Convert from BAT to XYZ
+        out_x = bat_analysis.Cartesian(out_x)
+    else:
+      out_x = np.zeros((x.shape[0], totDOFs))
+      out_x[:, bond_mask] = x
+      out_x[:, np.invert(bond_mask)] = 1.54
+      out_x[:, :6] = np.zeros(6)
+      if not for_traj:
+        for k, c in enumerate(out_x):
+          out_x[k] = bat_analysis.Cartesian(c)
     return out_x
 
   energy_func = losses.polymerHamiltonian(topFile, strucFile, transform_func=transform)
@@ -266,10 +296,8 @@ else:
   print("system type %s not recognized"%(system_type))
   sys.exit(2)
 
-#Can write trajectory, but for now only with lattice gas
-if write_traj:
-  outDat, steps_nc, U_nc, config_nc, biasVals_nc = createDataFile('LG_2D_traj.nc', 28)
-  write_freq = 50
+#Set write frequency
+write_freq = 10
 
 #Load weights now
 vaeModel.load_weights(weights_file)
@@ -296,7 +324,7 @@ move_types = [mc_moves.moveVAE, #mc_moves.moveVAEbiased
 move_probs = [1.0, 0.0, 0.0, 0.0]
 
 #Set up statistics
-num_steps = 10000
+num_steps = 1000
 move_counts = np.zeros((num_parallel, len(move_types)))
 num_acc = np.zeros((num_parallel, len(move_types)))
 if move_probs[0] > 0.0:
@@ -304,17 +332,19 @@ if move_probs[0] > 0.0:
 U_traj = np.zeros((num_parallel, num_steps+1))
 U_traj[:, 0] = curr_U
 
+#And saving trajectory
 if system_type == 'lg':
   N_traj = np.zeros((num_parallel, num_steps+1))
   N_traj[:, 0] = np.sum(curr_config, axis=(1, 2, 3))
-
-if write_traj:
   steps_nc[0:num_parallel] = np.arange(num_parallel)
   U_nc[0:num_parallel] = curr_U
   config_nc[0:num_parallel, :, :] = curr_config[..., 0]
-  #For next write, increase range to write over by num_parallel
-  start_ind = num_parallel
-  end_ind = 2*num_parallel
+else:
+  traj = np.zeros((num_parallel*(num_steps//write_freq + 1), totDOFs))
+  traj[0:num_parallel, :] = transform(curr_config, for_traj=True)
+#For next write, increase range to write over by num_parallel
+start_ind = num_parallel
+end_ind = 2*num_parallel
 
 for i in range(num_steps):
     print('Step %i'%i)
@@ -340,13 +370,15 @@ for i in range(num_steps):
     if system_type == 'lg':
       N_traj[:, i+1] = np.sum(curr_config, axis=(1, 2, 3))
 
-    if write_traj:
-      if (i+1)%write_freq == 0:
+    if (i+1)%write_freq == 0:
+      if system_type == 'lg':
         steps_nc[start_ind:end_ind] = np.arange(start_ind, end_ind)
         U_nc[start_ind:end_ind] = curr_U
         config_nc[start_ind:end_ind, :, :] = curr_config[..., 0]
-        start_ind += num_parallel
-        end_ind += num_parallel
+      else:
+        traj[start_ind:end_ind, :] = transform(curr_config, for_traj=True)
+      start_ind += num_parallel
+      end_ind += num_parallel
 
     #tf.keras.backend.clear_session()
     gc.collect()
@@ -365,7 +397,7 @@ np.save('U', U_traj)
 
 if system_type == 'lg':
   np.save('N', N_traj)
-
-if write_traj:
   outDat.close()
+else:
+  np.save('traj.npy', traj)
 

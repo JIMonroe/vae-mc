@@ -872,7 +872,7 @@ this, you have to sample P(z), then sample P(x|z) and compute the potential ener
 generated configurations. And also average over P(x|z) for those same configs.
   """
 
-  def __init__(self, vae, thermo_beta=1.0):
+  def __init__(self, vae, thermo_beta=1.0, potential=dimerHamiltonian):
     #Just need to define a VAE to use...
     self.vae = vae
     #Check if has a flow
@@ -884,6 +884,8 @@ generated configurations. And also average over P(x|z) for those same configs.
     self.logp_func = AutoregressiveLoss(vae.decoder, reduction=tf.keras.losses.Reduction.NONE)
     #Need to set thermodynamic beta for defining dimensionless potential energy
     self.thermo_beta = tf.cast(thermo_beta, tf.float32)
+    #Allows to modify potential energy function if need to, like for transformed coordinates
+    self.potential = potential
 
   def __call__(self,
                x_train,
@@ -901,7 +903,7 @@ generated configurations. And also average over P(x|z) for those same configs.
       z_sample, logdet = self.vae.flow(tz_sample, reverse=False)
     else:
       z_sample = tz_sample
-      logdet = 0.0  #Won't actually matter for this calculation
+      logdet = 0.0
 
     #Pass through decoder and draw samples
     #Will be slow if autoregressive
@@ -913,11 +915,20 @@ generated configurations. And also average over P(x|z) for those same configs.
     x_info = x_info[:-1]
 
     #And get probabilities of all configurations
+    #logp_func is going to (almost always) be specified as a loss, so negate
     log_Pxz = -self.logp_func(x_sample, x_info)
 
     #And get all potential energies - must be done with tf functions compatible with autograd!
-    u_pot = tf.cast(dimerHamiltonian(x_sample), 'float32')
+    u_pot = tf.cast(self.potential(x_sample), 'float32')
 
-    loss = tf.reduce_mean(self.thermo_beta*u_pot + log_Pxz)
+    #Finally, need to encode generated sample to obtain q(z|x)
+    z_means, z_logvars = self.vae.encoder(x_sample)
+
+    #And compute the pseudo KL term (not true KL divergence) to ensure q(z|x) close to P(z)
+    #Note that code for estimate_gaussian_kl computes whate we want, just negated
+    log_Pz_over_qzx = -estimate_gaussian_kl(tz_sample, z_sample, z_means, z_logvars)
+    log_Pz_over_qzx -= tf.reduce_mean(logdet)
+
+    loss = tf.reduce_mean(self.thermo_beta*u_pot + log_Pxz) + log_Pz_over_qzx
     return loss
 
