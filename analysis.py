@@ -527,13 +527,14 @@ class LatentAnalysis(object):
         #For uncertainty, nest it as dict within results with same keys
         self.results['uncertainty'] = dict(zip(self.result_keys, [None]*len(self.result_keys)))
 
-    def _all_analyses_(self, indices=None):
+    def _all_analyses_(self, indices=None, n_per=1):
         """
         Performs all analyses
 
         Inputs:
                 indices - (optional) indices of data used to generated q(z|x) means
                           and logvars to use for all analysis
+                n_per - (1) number of z samples to draw per q(z|x) distribution
         Outputs:
                 out_means - Tuple of all analysis results; means if analysis used batching
                 out_vars - Tuple of variances for only those analyses with batching
@@ -549,7 +550,12 @@ class LatentAnalysis(object):
         #Need samples for some analyses
         #And make sure if using regular AE, don't actually sample
         if self.vae_model.sample_latent:
-            z_sample = self.vae_model.sampler(this_z_means, this_z_logvars)
+            z_sample = []
+            for k in range(n_per):
+                z_sample.append(self.vae_model.sampler(this_z_means, this_z_logvars))
+            z_sample = tf.concat(z_sample, axis=0)
+            this_z_means = tf.tile(this_z_means, (n_per, 1))
+            this_z_logvars = tf.tile(this_z_logvars, (n_per, 1))
         else:
             z_sample = this_z_means + this_z_logvars
 
@@ -651,13 +657,14 @@ class LatentAnalysis(object):
         #Or reporting percentiles (say 5 and 95) instead of std
         return boot_avg, boot_std, boot_batch_std
 
-    def analyze(self, bootstrap=False, n_boot=100):
+    def analyze(self, bootstrap=False, n_boot=100, n_per=1):
         """
         Performs analysis.
 
         Inputs:
                 bootstrap - (False) bool if should perform bootstrapping or not
                 n_boot - (100) number of bootstrap samples for bootstrapping
+                n_per  - (1) when not bootstrapping, number of z samples per x to draw
         Outputs:
                 Stores dictionary of results in self.results
         """
@@ -671,7 +678,7 @@ class LatentAnalysis(object):
             self.results['uncertainty']['qzx_jd_per_dim'] = result[2][0]
             self.results['uncertainty']['qz_tot_corr_tcvae'] = result[2][1]
         else:
-            result = self._all_analyses_()
+            result = self._all_analyses_(n_per=n_per)
             result_means = [out.numpy() for out in result[0]]
             result_vars = [out.numpy() for out in result[1]]
             self.results = {**self.results, **dict(zip(self.result_keys, result_means))}
