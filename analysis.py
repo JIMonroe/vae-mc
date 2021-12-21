@@ -465,6 +465,7 @@ def latent_info_content(z_sample, tz_sample, log_det_rev, std_norm_sample, t_std
             KL_rev - KL divergence in "reverse" direction, specifically KL(q(z), sn(z))
             KL_for - KL divergence in "forward" direction, so KL(sn(z), q(z))
             JD - Jeffreys divergence 1/2(KLfor + KLrev)
+            tot_corr - total correlation KL(q(z), prod(q(zi))), or sum(S_qzi) - S_qz
     """
 
     #Compute upper bound on entropy of q(z)
@@ -484,7 +485,17 @@ def latent_info_content(z_sample, tz_sample, log_det_rev, std_norm_sample, t_std
                                + log_det_std_norm)
              )
     JD = 0.5*(KL_rev + KL_for) #Technically, I think Jeffreys Divergence is just the sum, but 1/2 makes sense
-    return S_q, KL_rev, KL_for, JD
+    #Can also compute total correlation if compute dimension-wise entropies
+    #Since each is 1D, can do reasonably well with just histogramming
+    S_ind = 0.0
+    for k in range(z_sample.shape[1]):
+        this_hist, this_bins = np.histogram(z_sample[:, k], bins='auto', density=True)
+        #Exclude bins with no counts
+        non_zero_bins = (this_hist != 0.0)
+        S_ind -= np.sum(this_hist[non_zero_bins]*np.log(this_hist[non_zero_bins])
+                        *(this_bins[1:] - this_bins[:-1])[non_zero_bins])
+    tot_corr = S_ind - S_q
+    return S_q, KL_rev, KL_for, JD, tot_corr
 
 
 class LatentAnalysis(object):
@@ -519,6 +530,7 @@ class LatentAnalysis(object):
                             'qz_var_explained',
                             'qz_gauss_tot_corr',
                             'qz_tot_corr_tcvae',
+                            'qz_tot_corr',
                             'kl_rev',
                             'kl_for',
                             'qz_jd',
@@ -607,14 +619,14 @@ class LatentAnalysis(object):
         tz_sample, log_det_rev = self.vae_model.flow(z_sample, reverse=True)
         t_std_norm_sample, log_det_std_norm = self.vae_model.flow(std_norm_sample, reverse=True)
         #print('Finished both flows')
-        qz_s, kl_rev, kl_for, qz_jd = latent_info_content(z_sample, tz_sample, log_det_rev,
+        qz_s, kl_rev, kl_for, qz_jd, tot_corr = latent_info_content(z_sample, tz_sample, log_det_rev,
                                                          std_norm_sample, t_std_norm_sample, log_det_std_norm)
         #print('Estimated information content with flows')
 
         out_means = (qzx_jd_per_dim_mean,
                      qz_cov_mat,
                      qz_cov_eigvecs, qz_cov_eigvals, qz_var_explained,
-                     qz_gauss_tot_corr, qz_tot_corr_tcvae_mean,
+                     qz_gauss_tot_corr, qz_tot_corr_tcvae_mean, tot_corr,
                      kl_rev, kl_for, qz_jd, qz_s)
         out_vars = (qzx_jd_per_dim_var, qz_tot_corr_tcvae_var)
         return out_means, out_vars
