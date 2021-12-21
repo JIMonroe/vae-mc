@@ -609,7 +609,7 @@ class LatentAnalysis(object):
                      qz_cov_mat,
                      qz_cov_eigvecs, qz_cov_eigvals, qz_var_explained,
                      qz_gauss_tot_corr, qz_tot_corr_tcvae_mean,
-                     qz_s, kl_rev, kl_for, qz_jd)
+                     kl_rev, kl_for, qz_jd, qz_s)
         out_vars = (qzx_jd_per_dim_var, qz_tot_corr_tcvae_var)
         return out_means, out_vars
 
@@ -669,7 +669,7 @@ class LatentAnalysis(object):
             #Correct uncertainties for batched analyses to include batch variance
             #Do manually (don't see other clean way)
             self.results['uncertainty']['qzx_jd_per_dim'] = result[2][0]
-            self.results['uncertainty']['qx_tot_corr_tcvae'] = result[2][1]
+            self.results['uncertainty']['qz_tot_corr_tcvae'] = result[2][1]
         else:
             result = self._all_analyses_()
             result_means = [out.numpy() for out in result[0]]
@@ -677,6 +677,6 @@ class LatentAnalysis(object):
             self.results = {**self.results, **dict(zip(self.result_keys, result_means))}
             #Since have uncertainties just from batching, display those for batched analyses
             self.results['uncertainty']['qzx_jd_per_dim'] = np.sqrt(result_vars[0])
-            self.results['uncertainty']['qx_tot_corr_tcvae'] = np.sqrt(result_vars[1])
+            self.results['uncertainty']['qz_tot_corr_tcvae'] = np.sqrt(result_vars[1])
 
 
