@@ -875,6 +875,20 @@ generated configurations. And also average over P(x|z) for those same configs.
     #Allows to modify potential energy function if need to, like for transformed coordinates
     self.potential = potential
 
+  def reverse_gaussian_kl_clipped(self, tz, z, z_mean, z_logvar, min_logP=-1e10):
+    logp_z = -0.5*tf.reduce_sum(tf.square(z - z_mean)*tf.exp(-z_logvar)
+                                + z_logvar,
+                                #+ tf.math.log(2.0*np.pi),
+                                axis=1)
+    #Worry that logp_z will sometimes go to essentially negative infinity
+    #This is just where the decoding -> encoding process makes the original z super unlikely
+    #But it seems this is mostly rare, so clip those instances
+    logp_z = tf.where(logp_z > min_logP, logp_z, min_logP*tf.ones(tf.shape(logp_z)))
+    logp_tz = -0.5*tf.reduce_sum(tf.square(tz),
+                                 #+ tf.math.log(2.0*np.pi),
+                                 axis=1)
+    return tf.reduce_mean(logp_tz - logp_z)
+
   def __call__(self,
                x_train,
                unused_recon_info):
@@ -913,8 +927,7 @@ generated configurations. And also average over P(x|z) for those same configs.
     z_means, z_logvars = self.vae.encoder(x_sample)
 
     #And compute the pseudo KL term (not true KL divergence) to ensure q(z|x) close to P(z)
-    #Note that code for estimate_gaussian_kl computes whate we want, just negated
-    log_Pz_over_qzx = -estimate_gaussian_kl(tz_sample, z_sample, z_means, z_logvars)
+    log_Pz_over_qzx = self.reverse_gaussian_kl_clipped(tz_sample, z_sample, z_means, z_logvars)
     log_Pz_over_qzx -= tf.reduce_mean(logdet)
 
     loss = tf.reduce_mean(self.thermo_beta*u_pot + log_Pxz) + log_Pz_over_qzx

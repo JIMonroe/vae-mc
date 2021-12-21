@@ -11,6 +11,9 @@ from libVAE import dataloaders, losses, vae, mc_moves, mc_moves_LG
 
 import simtk.unit as unit
 
+#Try to set GPU to allow multiple processes/trainings
+#Assumes just have one GPU, so still set CUDA_VISIBLE_DEVICES
+#tf.config.experimental.set_memory_growth(tf.config.list_physical_devices('GPU')[0], True)
 
 #Define function to save trajectory if we want to
 #Same as in simLG.sim_2D
@@ -297,7 +300,7 @@ else:
   sys.exit(2)
 
 #Set write frequency
-write_freq = 10
+write_freq = 100
 
 #Load weights now
 vaeModel.load_weights(weights_file)
@@ -324,7 +327,7 @@ move_types = [mc_moves.moveVAE, #mc_moves.moveVAEbiased
 move_probs = [1.0, 0.0, 0.0, 0.0]
 
 #Set up statistics
-num_steps = 1000
+num_steps = 10000
 move_counts = np.zeros((num_parallel, len(move_types)))
 num_acc = np.zeros((num_parallel, len(move_types)))
 if move_probs[0] > 0.0:
