@@ -854,7 +854,7 @@ loop requires minimal alterations.
     return -log_p
 
 
-class dimer_reverseKL_loss(object):
+class reverseKL_loss(object):
   """Computes an upper bound on the reverse KL divergence, so KL(P(x), Ptrue(x)). To do
 this, you have to sample P(z), then sample P(x|z) and compute the potential energies of
 generated configurations. And also average over P(x|z) for those same configs.
@@ -875,15 +875,34 @@ generated configurations. And also average over P(x|z) for those same configs.
     #Allows to modify potential energy function if need to, like for transformed coordinates
     self.potential = potential
 
-  def reverse_gaussian_kl_clipped(self, tz, z, z_mean, z_logvar, min_logP=-1e10):
-    logp_z = -0.5*tf.reduce_sum(tf.square(z - z_mean)*tf.exp(-z_logvar)
-                                + z_logvar,
-                                #+ tf.math.log(2.0*np.pi),
-                                axis=1)
+  def reverse_gaussian_kl_clipped(self, tz, z, z_mean, z_logvar, min_logvar=-60.0):
+    #Need to do in numerically stable way that prevents any infinities
     #Worry that logp_z will sometimes go to essentially negative infinity
     #This is just where the decoding -> encoding process makes the original z super unlikely
-    #But it seems this is mostly rare, so clip those instances
-    logp_z = tf.where(logp_z > min_logP, logp_z, min_logP*tf.ones(tf.shape(logp_z)))
+    #If get infinity then just clip, gradients will be NaN
+    #So what we'll do is actually clip z_logvar
+    #Then the computation of logp_z should be less than infinity if (z-z_mean)**2 not huge
+    #BUT, the gradients will just be zero from that, not NaN
+    # try:
+    #     tf.debugging.assert_all_finite(z_logvar, 'Logvar not ok.')
+    # except tf.errors.InvalidArgumentError as e:
+    #     print('Had NaN or Inf in z_logvar, BEFORE clipping.', z_logvar)
+    clipped_z_logvar = tf.where(z_logvar > min_logvar,
+                                z_logvar,
+                                min_logvar*tf.ones(tf.shape(z_logvar)))
+    #For most stable computation, scale before squaring difference
+    #Means need the std, so can go to smaller logvar because just need std to be non-zero
+    clipped_std = tf.exp(0.5*clipped_z_logvar)
+    logp_z = -0.5*tf.reduce_sum(tf.square(z/clipped_std - z_mean/clipped_std)
+                                + clipped_z_logvar,
+                                #+ tf.math.log(2.0*np.pi),
+                                axis=1)
+    # dist = tfp.distributions.Normal(z_mean, clipped_std)
+    # logp_z = tf.reduce_sum(dist.log_prob(z), axis=1)
+    # try:
+    #     tf.debugging.assert_all_finite(logp_z, 'Log of q(z|x) not ok.')
+    # except tf.errors.InvalidArgumentError as e:
+    #     print('Had NaN or Inf in log of q(z|x).', logp_z)
     logp_tz = -0.5*tf.reduce_sum(tf.square(tz),
                                  #+ tf.math.log(2.0*np.pi),
                                  axis=1)
