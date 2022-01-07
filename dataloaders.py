@@ -6,6 +6,8 @@ import numpy as np
 import tensorflow as tf
 from netCDF4 import Dataset
 
+from libVAE.coord_transforms import sincos
+
 def raw_image_data(datafile):
   """Reads in data in netcdf format and retuns numpy array.
 Really working with lattice gas snapshots, which we can consider images.
@@ -142,13 +144,14 @@ analysis, make sure to also use MDAnalysis.analysis.bat to switch between them i
     rawData = rawData[:, bond_mask]
 
     if sin_cos:
+      rawData = sincos(rawData, totDOFs)
       #Instead of dihedral angles, input sine-cosine pairs
       #Will have Natoms - 3 dihedral angles in BAT coordinates and will be at end
-      torsion_sin = np.sin(rawData[:, -(totDOFs//3 - 3):])
-      torsion_cos = np.cos(rawData[:, -(totDOFs//3 - 3):])
-      rawData = np.concatenate([rawData[:, :-(totDOFs//3 - 3)],
-                               torsion_sin,
-                               torsion_cos], axis=1)
+      #torsion_sin = np.sin(rawData[:, -(totDOFs//3 - 3):])
+      #torsion_cos = np.cos(rawData[:, -(totDOFs//3 - 3):])
+      #rawData = np.concatenate([rawData[:, :-(totDOFs//3 - 3)],
+      #                         torsion_sin,
+      #                         torsion_cos], axis=1)
 
   #Save some fraction of data for validation
   valInd = int((1.0-val_frac)*rawData.shape[0])
@@ -186,13 +189,14 @@ accomplished with BAT coordinates and only passing DOFs that aren't bonds.
     rawData = rawData[:, bond_mask]
 
     if sin_cos:
+      rawData = sincos(rawData, totDOFs)
       #Input sine-cosine pairs instead of dihedral angles
       #With autoregressive it's easier to just work with those throughout
-      torsion_sin = np.sin(rawData[:, -(totDOFs//3 - 3):])
-      torsion_cos = np.cos(rawData[:, -(totDOFs//3 - 3):])
-      rawData = np.concatenate([rawData[:, :-(totDOFs//3 - 3)],
-                               torsion_sin,
-                               torsion_cos], axis=1)
+      #torsion_sin = np.sin(rawData[:, -(totDOFs//3 - 3):])
+      #torsion_cos = np.cos(rawData[:, -(totDOFs//3 - 3):])
+      #rawData = np.concatenate([rawData[:, :-(totDOFs//3 - 3)],
+      #                         torsion_sin,
+      #                         torsion_cos], axis=1)
 
     ##Also reorder so that autoregressive model predicts angle, dihedral, angle dihedral, etc.
     #dof_order = []

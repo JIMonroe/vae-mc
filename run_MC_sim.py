@@ -8,6 +8,7 @@ import tensorflow as tf
 from netCDF4 import Dataset
 
 from libVAE import dataloaders, losses, vae, mc_moves, mc_moves_LG
+from libVAE.coord_transforms import sincos, unsincos
 
 import simtk.unit as unit
 
@@ -52,33 +53,6 @@ def createDataFile(fileName, L, biasRange=None):
   biasVals.units = "dimensionless energy" 
 
   return outDat, steps, U, config, biasVals
-
-
-#For transforming coordinates for molecular systems...
-#Works for any molecular system with dihedrals or sine-cosine pairs last (default)
-#Just specifiy the total number of DOFs for the molecule
-def sincos(x, totDOFs):
-  torsion_sin = np.sin(x[:, -(totDOFs//3 - 3):])
-  torsion_cos = np.cos(x[:, -(totDOFs//3 - 3):])
-  out_x = np.concatenate([x[:, :-(totDOFs//3 - 3)], torsion_sin, torsion_cos], axis=1)
-  return out_x
-
-
-#Unlike sincos, unsincos just does one config at a time to work with bat_analysis
-def unsincos(x, totDOFs):
-  if len(x.shape) == 1:
-    sin_vals = x[-2*(totDOFs//3 - 3):-(totDOFs//3 - 3)]
-    cos_vals = x[-(totDOFs//3 - 3):]
-    r_vals = np.sqrt(sin_vals**2 + cos_vals**2)
-    torsion_vals = np.arctan2(sin_vals/r_vals, cos_vals/r_vals)
-    out_x = np.concatenate([x[:-2*(totDOFs//3 - 3)], torsion_vals])
-  else:
-    sin_vals = x[:, -2*(totDOFs//3 - 3):-(totDOFs//3 - 3)]
-    cos_vals = x[:, -(totDOFs//3 - 3):]
-    r_vals = np.sqrt(sin_vals**2 + cos_vals**2)
-    torsion_vals = np.arctan2(sin_vals/r_vals, cos_vals/r_vals)
-    out_x = np.concatenate([x[:, :-2*(totDOFs//3 - 3)], torsion_vals], axis=1)
-  return out_x
 
 
 #Get system type
