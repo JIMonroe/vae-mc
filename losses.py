@@ -259,6 +259,33 @@ class dialanineHamiltonian(object):
       return pot_energies
 
 
+def wrap_openmm_energy_tf(energy_func):
+  """
+  Given a function that computes configurational energies with OpenMM, which should take
+  an optional argument get_forces to return forces, wraps this function with a
+  @tf.custom_gradient so that the energy call can have gradients automatically computed
+  (via the computed forces) by GradientTape.
+  """
+  @tf.custom_gradient
+  def energy_with_grads(conf):
+    conf = conf.numpy()
+    energies, forces = energy_func(conf, get_forces=True)
+    energies = tf.cast(energies, tf.float32)
+    forces = tf.cast(forces, tf.float32)
+
+    def _grad_fn(upstream):
+      #Forces will always be (n_batch, n_atoms, 3)
+      #That is because the input conf must also be this shape for OpenMM to work
+      #So upstream has to be able to multiply that shape
+      upstream = tf.reshape(upstream, (-1, 1, 1))
+      grads = upstream * (-forces)
+      return grads
+
+    return energies, _grad_fn
+
+  return energy_with_grads
+
+
 def gaussian_sampler(mean, logvar):
   """Simple samples a Gaussian distribution given means and log variances. Same as using
 the reparametrization trick so can add this to a loss function and use samples rather than
