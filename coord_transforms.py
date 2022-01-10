@@ -150,13 +150,13 @@ class BAT_tf(bat.BAT):
         n_batch = tf.shape(bat_frame)[0]
 
         # Split the bat vector into more convenient variables
-        origin = bat_frame[:, :3]
+        origin = tf.identity(bat_frame[:, :3])
         (phi, theta, omega) = tf.split(bat_frame[:, 3:6], 3, axis=1)
         (r01, r12, a012) = tf.split(bat_frame[:, 6:9], 3, axis=1)
         n_torsions = (self._ag.n_atoms - 3)
-        bonds = bat_frame[:, 9:n_torsions + 9]
-        angles = bat_frame[:, n_torsions + 9:2 * n_torsions + 9]
-        torsions = bat_frame[:, 2 * n_torsions + 9:]
+        bonds = tf.identity(bat_frame[:, 9:n_torsions + 9])
+        angles = tf.identity(bat_frame[:, n_torsions + 9:2 * n_torsions + 9])
+        torsions = tf.identity(bat_frame[:, 2 * n_torsions + 9:])
         # When appropriate, convert improper to proper torsions
         shift = tf.gather(torsions,
                           tf.tile([self._primary_torsion_indices], (n_batch, 1)),
@@ -164,7 +164,7 @@ class BAT_tf(bat.BAT):
         unique_primary_torsion_bool = np.zeros(len(self._primary_torsion_indices), dtype=bool)
         unique_primary_torsion_bool[self._unique_primary_torsion_indices] = True
         shift = tf.where(unique_primary_torsion_bool, x=tf.zeros_like(shift), y=shift)
-        torsions += shift
+        torsions = torsions + shift
         # Wrap torsions to between -np.pi and np.pi
         torsions = ((torsions + np.pi) % (2 * np.pi)) - np.pi
 
@@ -208,34 +208,35 @@ class BAT_tf(bat.BAT):
         # Place the remaining atoms
         for i in range(len(self._torsion_XYZ_inds)):
             (a0, a1, a2, a3) = self._torsion_XYZ_inds[i]
-            r01 = bonds[:, i:i+1]
-            angle = angles[:, i:i+1]
-            torsion = torsions[:, i:i+1]
+            this_r01 = bonds[:, i:i+1]
+            this_angle = angles[:, i:i+1]
+            this_torsion = torsions[:, i:i+1]
 
-            p1 = XYZ[XYZ_order.index(a1)]
-            p3 = XYZ[XYZ_order.index(a3)]
-            p2 = XYZ[XYZ_order.index(a2)]
+            this_p1 = XYZ[XYZ_order.index(a1)]
+            this_p3 = XYZ[XYZ_order.index(a3)]
+            this_p2 = XYZ[XYZ_order.index(a2)]
 
-            sn_ang = tf.math.sin(angle)
-            cs_ang = tf.math.cos(angle)
-            sn_tor = tf.math.sin(torsion)
-            cs_tor = tf.math.cos(torsion)
+            sn_ang = tf.math.sin(this_angle)
+            cs_ang = tf.math.cos(this_angle)
+            sn_tor = tf.math.sin(this_torsion)
+            cs_tor = tf.math.cos(this_torsion)
 
-            v21 = p1 - p2
-            v21 /= tf.math.sqrt(tf.reduce_sum(v21 * v21))
-            v32 = p2 - p3
-            v32 /= tf.math.sqrt(tf.reduce_sum(v32 * v32))
+            v21 = this_p1 - this_p2
+            v21 /= tf.math.sqrt(tf.reduce_sum(v21 * v21, axis=-1, keepdims=True))
+            v32 = this_p2 - this_p3
+            v32 /= tf.math.sqrt(tf.reduce_sum(v32 * v32, axis=-1, keepdims=True))
 
             vp = tf.linalg.cross(v32, v21)
-            cs = tf.reduce_sum(v21 * v32)
+            cs = tf.reduce_sum(v21 * v32, axis=-1, keepdims=True)
 
             sn = tf.math.maximum(tf.math.sqrt(1.0 - cs * cs), 0.0000000001)
             vp = vp / sn
             vu = tf.linalg.cross(vp, v21)
 
-            XYZ.append(p1 + r01*(vu*sn_ang*cs_tor + vp*sn_ang*sn_tor - v21*cs_ang))
+            this_coord = this_p1 + this_r01*(vu*sn_ang*cs_tor + vp*sn_ang*sn_tor - v21*cs_ang)
+            XYZ.append(this_coord)
             XYZ_order.append(a0)
-        XYZ = tf.gather(XYZ, XYZ_order)
+        XYZ = tf.dynamic_stitch(XYZ_order, XYZ)
         XYZ = tf.transpose(XYZ, perm=(1, 0, 2))
         return XYZ
 

@@ -239,16 +239,24 @@ class dialanineHamiltonian(object):
                               mm.Platform.getPlatformByName('CPU'))
     self.transform_func = transform_func
   
-  def __call__(self, configs):
+  def __call__(self, configs, get_forces=False):
     pot_energies = np.zeros(configs.shape[0])
+    if get_forces:
+      forces = []
     for i, conf in enumerate(configs):
       if self.transform_func is not None:
         conf = self.transform_func(conf)
       self.sim.context.setPositions(conf*unit.angstroms)
-      this_state = self.sim.context.getState(getEnergy=True)
+      this_state = self.sim.context.getState(getEnergy=True, getForces=get_forces)
       pot_quantity = this_state.getPotentialEnergy()
       pot_energies[i] = pot_quantity.value_in_unit(unit.kilojoules_per_mole)
-    return pot_energies
+      if get_forces:
+        force_quantity = this_state.getForces()
+        forces.append(force_quantity.value_in_unit(unit.kilojoules_per_mole/unit.angstroms))
+    if get_forces:
+      return pot_energies, np.array(forces)
+    else:
+      return pot_energies
 
 
 def gaussian_sampler(mean, logvar):
