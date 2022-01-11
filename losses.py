@@ -185,7 +185,49 @@ def dimerHamiltonian(conf, doClip=True):
     return u
 
 
-class polymerHamiltonian(object):
+class openmmHamiltonian(object):
+  """
+  Base class for systems where need Hamiltonian from OpenMM (really just potential energy).
+  Just to be used for inheritance as the __init__ method is not implemented. Each __init__
+  should be unique to a particular molecular system.
+  """
+
+  def __init__(self):
+    raise NotImplementedError("Must write __init__ for each unique system.")
+
+  def __call__(self, configs, get_forces=False):
+    configs = np.array(configs)
+    pot_energies = np.zeros(configs.shape[0])
+    forces = [] #Don't know shape because may transform configs
+    for i, conf in enumerate(configs):
+      if self.transform_func is not None:
+        conf = self.transform_func(conf)
+      #If configuration not finite, don't bother with energy to avoid OpenMM error
+      #Would make sense to set to NaN, but that breaks training, so let be zero
+      if not np.all(np.isfinite(conf)):
+        #pot_energies[i] = np.nan
+        if get_forces:
+          forces.append(np.zeros_like(conf))
+      else:
+        self.sim.context.setPositions(conf*unit.angstroms)
+        this_state = self.sim.context.getState(getEnergy=True, getForces=get_forces)
+        pot_quantity = this_state.getPotentialEnergy()
+        pot_energies[i] = pot_quantity.value_in_unit(unit.kilojoules_per_mole)
+        if get_forces:
+          #Only compute forces if energy finite
+          if np.isfinite(pot_energies[i]):
+            force_quantity = this_state.getForces()
+            forces.append(force_quantity.value_in_unit(unit.kilojoules_per_mole/unit.angstroms))
+          #Otherwise zero out so gradients zero
+          else:
+            forces.append(np.zeros_like(conf))
+    if get_forces:
+      return pot_energies, np.array(forces)
+    else:
+      return pot_energies
+  
+
+class polymerHamiltonian(openmmHamiltonian):
 
   def __init__(self, topFile, strucFile, transform_func=None):
     parmstruc = pmd.load_file(topFile, xyz=strucFile)
@@ -202,27 +244,8 @@ class polymerHamiltonian(object):
                               mm.Platform.getPlatformByName('CPU'))
     self.transform_func = transform_func
   
-  def __call__(self, configs, get_forces=False):
-    pot_energies = np.zeros(configs.shape[0])
-    if get_forces:
-      forces = []
-    for i, conf in enumerate(configs):
-      if self.transform_func is not None:
-        conf = self.transform_func(conf)
-      self.sim.context.setPositions(conf*unit.angstroms)
-      this_state = self.sim.context.getState(getEnergy=True, getForces=get_forces)
-      pot_quantity = this_state.getPotentialEnergy()
-      pot_energies[i] = pot_quantity.value_in_unit(unit.kilojoules_per_mole)
-      if get_forces:
-        force_quantity = this_state.getForces()
-        forces.append(force_quantity.value_in_unit(unit.kilojoules_per_mole/unit.angstroms))
-    if get_forces:
-      return pot_energies, np.array(forces)
-    else:
-      return pot_energies
 
-
-class dialanineHamiltonian(object):
+class dialanineHamiltonian(openmmHamiltonian):
 
   def __init__(self, transform_func=None):
     ala_vac = testsystems.AlanineDipeptideVacuum()
@@ -239,25 +262,6 @@ class dialanineHamiltonian(object):
                               mm.Platform.getPlatformByName('CPU'))
     self.transform_func = transform_func
   
-  def __call__(self, configs, get_forces=False):
-    pot_energies = np.zeros(configs.shape[0])
-    if get_forces:
-      forces = []
-    for i, conf in enumerate(configs):
-      if self.transform_func is not None:
-        conf = self.transform_func(conf)
-      self.sim.context.setPositions(conf*unit.angstroms)
-      this_state = self.sim.context.getState(getEnergy=True, getForces=get_forces)
-      pot_quantity = this_state.getPotentialEnergy()
-      pot_energies[i] = pot_quantity.value_in_unit(unit.kilojoules_per_mole)
-      if get_forces:
-        force_quantity = this_state.getForces()
-        forces.append(force_quantity.value_in_unit(unit.kilojoules_per_mole/unit.angstroms))
-    if get_forces:
-      return pot_energies, np.array(forces)
-    else:
-      return pot_energies
-
 
 def wrap_openmm_energy_tf(energy_func):
   """
