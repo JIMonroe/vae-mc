@@ -365,6 +365,95 @@ to use uniform z-sampling with this scheme, but will need to test.
     return logPacc, newConfig, newU
 
 
+def moveVAE_cb(currConfig, currU, vaeModel, B, energyFunc, zDrawFunc, energyParams={}, samplerParams={}, zDrawType='direct', n_draws=10, verbose=False):
+  """Performs a MC move inspired by a VAE model with configurational bias based on treating
+the full model P(x) as the arbitrary trial distribution. zDrawFunc should be a class that can
+be called with different styles of draws for z.
+  """
+  n_batch = currConfig.shape[0]
+
+  #Move in the forward direction
+  #Draw a z value from P(z|x1)
+  currZ, zLogProbX1 = zDrawLocal(vaeModel, currConfig, nDraws=n_draws)
+  #Because n_draws is great than 1 for config bias, need to do some reshaping
+  #But only for inputs, not log probabilities
+  currZ = tf.reshape(currZ, (-1, currZ.shape[-1]))
+  #Draw a new z value according to chosen distribution
+  newZ, z2LogProb = zDrawFunc(draw_type=zDrawType, nDraws=n_draws,
+                              batch_size=n_batch)
+  newZ = tf.reshape(newZ, (-1, newZ.shape[-1]))
+  #Now draw new configuration based on new z, note drawing over all n_draws and batches
+  newConfig, logProbX2 = xDrawSimple(vaeModel, newZ, **samplerParams)
+  newU = energyFunc(newConfig, **energyParams)
+  if tf.is_tensor(newU):
+    newU = newU.numpy()
+
+  #Retrace steps in reverse direction
+  #Calculate probability of drawing newZ from P(z|x2)
+  #Exactly retracing steps, so nDraws is 1 because not drawing extra
+  #Still shaped so n_draws and batch_size compressed on same axis
+  newZ, zLogProbX2 = zDrawLocal(vaeModel, newConfig, zSel=newZ, nDraws=1)
+  #Calculate probability of drawing currZ from chosen distribution
+  currZ, z1LogProb = zDrawFunc(draw_type=zDrawType, zSel=currZ, nDraws=1)
+  #Calculate probability of drawing currConfig from currZ
+  #Need to handle differently for actual current config and proposed reverse configs
+  #Easiest if just reshape to do that, since reshaping nearly free
+  currZ = tf.reshape(currZ, (n_draws, n_batch, -1))
+  currConfig, logProbX1 = xDrawSimple(vaeModel, currZ[0, ...],
+                                     xSel=currConfig, **samplerParams)
+  #No selection here, just draw
+  revConfig, revlogProbX1 = xDrawSimple(vaeModel,
+                                        tf.reshape(currZ[1:, ...], (-1, currZ.shape[-1])),
+                                        **samplerParams)
+  #Need to calculate energy for proposed reverse configs
+  revU = energyFunc(revConfig, **energyParams)
+  if tf.is_tensor(revU):
+    revU = revU.numpy()
+
+  #Now reshape all energies and log probabilities so n_draws is on first axis
+  #And will put together reverse energies and log probs
+  revU = np.reshape(revU, (n_draws-1, n_batch))
+  revU = np.concatenate([currU[np.newaxis, :], revU])
+  revlogProbX1 = np.reshape(revlogProbX1, (n_draws-1, n_batch))
+  revlogProbX1 = np.concatenate([logProbX1[np.newaxis, ...], revlogProbX1])
+  newU = np.reshape(newU, (n_draws, n_batch))
+  logProbX2 = np.reshape(logProbX2, (n_draws, n_batch))
+  zLogProbX2 = np.reshape(zLogProbX2, (n_draws, n_batch))
+  z1LogProb = np.reshape(z1LogProb, (n_draws, n_batch))
+  newConfig = np.reshape(newConfig, (n_draws,)+currConfig.shape)
+
+  #For forward direction, select configuration based on config bias weights
+  log_cb_for = -B*newU - logProbX2 - z2LogProb + zLogProbX2
+  #Use Gumbel max trick
+  sel_ind = np.argmax(log_cb_for + np.random.gumbel(size=log_cb_for.shape), axis=0)
+  newConfig = np.squeeze(np.take_along_axis(newConfig,
+                                            sel_ind[np.newaxis, :, np.newaxis], axis=0),
+                         axis=0)
+  newU = np.squeeze(np.take_along_axis(newU,
+                                       sel_ind[np.newaxis, :]),
+                    axis=0)
+  #And sum config bias log weights to get Rosenbluth weight
+  max_log_cb_for = np.max(log_cb_for, axis=0)
+  w_for = max_log_cb_for + np.sum(np.exp(log_cb_for - max_log_cb_for), axis=0)
+
+  #In reverse, just need to sum to get Rosenbluth weight, W
+  log_cb_rev = -B*revU - revlogProbX1 - z1LogProb + zLogProbX1
+  max_log_cb_rev = np.max(log_cb_rev, axis=0)
+  w_rev = max_log_cb_rev + np.sum(np.exp(log_cb_rev - max_log_cb_rev), axis=0)
+
+  #Compute log acceptance probability by combining log probabilities
+  logPacc = np.nan_to_num(w_for) - np.nan_to_num(w_rev)
+
+  #if not np.all(np.isfinite([logprobFor, logprobRev, zLogProbFor, zLogProbRev])):
+  if verbose:
+    #print('Breakdown of log(P_acc):')
+    full_info = [logPacc, w_rev, w_for]
+    #print(full_info)
+    return logPacc, newConfig, newU, full_info
+  else:
+    return logPacc, newConfig, newU
+
+
 class zDrawFunc_wrap_InvNet(object):
   """Based on data, wraps all functions to draw z values. Allows to precompute statistics
 given data so that don't have to redo every MC step. Also need to provide a InvNet model for
