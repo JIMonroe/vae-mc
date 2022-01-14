@@ -80,7 +80,7 @@ if system_type == 'lg':
   sampler_params = {'activation':None,
                     'sampler_func':losses.binary_sampler,
                     'logp_func':losses.bernoulli_loss}
-  beta = 3.54 #1.60 #2.00 #1.77
+  beta = 1.77 #1.60 #2.00 #3.54
   data = dataloaders.raw_image_data(dat_files)
   #Saving trajectory is special for lattice gas
   outDat, steps_nc, U_nc, config_nc, biasVals_nc = createDataFile('LG_2D_traj.nc', 28)
@@ -294,18 +294,18 @@ if tf.is_tensor(curr_U):
   curr_U = curr_U.numpy()
 
 #Allow for multiple types of MC moves
-move_types = [mc_moves.moveVAE_cb, #mc_moves.moveVAEbiased
+move_types = [mc_moves.moveVAE, #mc_moves.moveVAEbiased
               mc_moves_LG.moveTranslate,
               mc_moves_LG.moveDeleteMulti,
               mc_moves_LG.moveInsertMulti]
-move_probs = [1.0, 0.0, 0.0, 0.0]
+move_probs = [0.05, 0.475, 0.2375, 0.2375] #[1.0, 0.0, 0.0, 0.0]
 
 #Set up statistics
 num_steps = 100000
 move_counts = np.zeros((num_parallel, len(move_types)))
 num_acc = np.zeros((num_parallel, len(move_types)))
 if move_probs[0] > 0.0:
-  mc_stats = np.zeros((num_parallel, num_steps, 3)) #8 if unbiased, 10 if biased, 3 if cb
+  mc_stats = np.zeros((num_parallel, num_steps, 8)) #8 if unbiased, 10 if biased, 3 if cb
 U_traj = np.zeros((num_parallel, num_steps+1))
 U_traj[:, 0] = curr_U
 
@@ -337,6 +337,7 @@ for i in range(num_steps):
         mc_stats[:, i, :] = np.array(move_info[-1]).T
     else:
         move_info = move_types[m](curr_config, curr_U, beta)
+        mc_stats[:, i, 0] = np.array(move_info[0])
     rand_logP = np.log(np.random.random(num_parallel))
     to_acc = (move_info[0]  > rand_logP)
     num_acc[to_acc, m] += 1.0

@@ -337,7 +337,7 @@ def vaeBias(vae_model, x, nSample=200):
   #approximately standard normal
   #For numerical stability, subract maximum term
   ln_p_z = -0.5*(z*z) + log_det # - 0.5*np.log(2.0*np.pi)
-  max_term = tf.reduce_max(z, axis=0)
+  max_term = tf.reduce_max(ln_p_z, axis=0)
   p_z = np.exp(ln_p_z - max_term)
   #Compute bias 
   bias = -(tf.math.log(tf.reduce_mean(p_z, axis=0)) + max_term)
@@ -510,6 +510,19 @@ called with different styles of draws for z.
   print('Breakdown of log(P_acc):')
   print(logPacc, -B*(newU-currU), zLogProbNew, zLogProbCurr)
 
+  return logPacc, newConfig, newU
+
+
+def moveGauss(currConfig, currU, B, energyFunc, energyParams={}, noise=0.02):
+  """General purpose MC move that simply adds normally-distributed noise to an input
+configuration. The amount of noise can be modified by setting the noise input.
+  """
+  norm_sample = noise*np.random.normal(size=currConfig.shape)
+  newConfig = currConfig + norm_sample
+  newU = energyFunc(newConfig, **energyParams)
+  if tf.is_tensor(newU):
+    newU = newU.numpy()
+  logPacc = -B*(newU - currU)
   return logPacc, newConfig, newU
 
 
