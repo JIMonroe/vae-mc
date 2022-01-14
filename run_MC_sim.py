@@ -14,7 +14,7 @@ import simtk.unit as unit
 
 #Try to set GPU to allow multiple processes/trainings
 #Assumes just have one GPU, so still set CUDA_VISIBLE_DEVICES
-#tf.config.experimental.set_memory_growth(tf.config.list_physical_devices('GPU')[0], True)
+tf.config.experimental.set_memory_growth(tf.config.list_physical_devices('GPU')[0], True)
 
 #Define function to save trajectory if we want to
 #Same as in simLG.sim_2D
@@ -274,7 +274,7 @@ else:
   sys.exit(2)
 
 #Set write frequency
-write_freq = 100
+write_freq = 1000
 
 #Load weights now
 vaeModel.load_weights(weights_file)
@@ -294,18 +294,18 @@ if tf.is_tensor(curr_U):
   curr_U = curr_U.numpy()
 
 #Allow for multiple types of MC moves
-move_types = [mc_moves.moveVAE, #mc_moves.moveVAEbiased
+move_types = [mc_moves.moveVAE_cb, #mc_moves.moveVAEbiased
               mc_moves_LG.moveTranslate,
               mc_moves_LG.moveDeleteMulti,
               mc_moves_LG.moveInsertMulti]
 move_probs = [1.0, 0.0, 0.0, 0.0]
 
 #Set up statistics
-num_steps = 10000
+num_steps = 100000
 move_counts = np.zeros((num_parallel, len(move_types)))
 num_acc = np.zeros((num_parallel, len(move_types)))
 if move_probs[0] > 0.0:
-  mc_stats = np.zeros((num_parallel, num_steps, 8)) #8 if unbiased, 10 if biased
+  mc_stats = np.zeros((num_parallel, num_steps, 3)) #8 if unbiased, 10 if biased, 3 if cb
 U_traj = np.zeros((num_parallel, num_steps+1))
 U_traj[:, 0] = curr_U
 

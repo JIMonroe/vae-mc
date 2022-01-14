@@ -181,6 +181,9 @@ and calculate its probability given x.
   except ValueError:
     zMean = vae_model.encoder(tf.cast(x, 'float32'))
     zLogvar = tf.fill(zMean.shape, -85.0)
+  #Tile so can work with means and logvars more easily throughout
+  zMean = tf.tile(zMean, (nDraws, 1))
+  zLogvar = tf.tile(zLogvar, (nDraws, 1))
   if zSel is not None:
     #Must have batch size same as input x
     if zSel.shape[0] != batch_size:
@@ -198,15 +201,15 @@ and calculate its probability given x.
       #Would be less code, but instead be more clear here
       #Also makes code work with deterministic encodings
       # zval = vae_model.sampler(tf.tile(zMean, (nDraws-1,1)), tf.tile(zLogvar, (nDraws-1,1)))
-      zval = tf.random.normal((zMean.shape[0]*(nDraws-1), zMean.shape[1]),
-                              mean=tf.tile(zMean, (nDraws-1,1)),
-                              stddev=tf.tile(tf.exp(0.5*zLogvar), (nDraws-1,1)))
+      zval = tf.random.normal((batch_size*(nDraws-1), zMean.shape[-1]),
+                              mean=zMean[batch_size:, ...],
+                              stddev=tf.exp(0.5*zLogvar[batch_size:, ...]))
       zval = tf.concat((zSel, zval), 0)
   else:
     # zval = vae_model.sampler(tf.tile(zMean, (nDraws,1)), tf.tile(zLogvar, (nDraws,1)))
-    zval = tf.random.normal((zMean.shape[0]*nDraws, zMean.shape[1]),
-                            mean=tf.tile(zMean, (nDraws,1)),
-                            stddev=tf.tile(tf.exp(0.5*zLogvar), (nDraws,1)))
+    zval = tf.random.normal((batch_size*nDraws, zMean.shape[-1]),
+                            mean=zMean,
+                            stddev=tf.exp(0.5*zLogvar))
   zlogprob = tf.reduce_sum( -0.5*tf.math.square(zval - zMean)/tf.math.exp(zLogvar)
                             - 0.5*np.log(2.0*np.pi) - 0.5*zLogvar, axis=1).numpy()
   try:
@@ -215,7 +218,7 @@ and calculate its probability given x.
       zlogprob -= log_det.numpy()
   except AttributeError:
     pass
-  zval = tf.reshape(zval, (nDraws,)+zMean.shape)
+  zval = tf.reshape(zval, (nDraws, batch_size, zMean.shape[-1]))
   zlogprob = np.reshape(zlogprob, (nDraws, batch_size))
   return zval, zlogprob
 
@@ -365,7 +368,7 @@ to use uniform z-sampling with this scheme, but will need to test.
     return logPacc, newConfig, newU
 
 
-def moveVAE_cb(currConfig, currU, vaeModel, B, energyFunc, zDrawFunc, energyParams={}, samplerParams={}, zDrawType='direct', n_draws=10, verbose=False):
+def moveVAE_cb(currConfig, currU, vaeModel, B, energyFunc, zDrawFunc, energyParams={}, samplerParams={}, zDrawType='direct', n_draws=100, verbose=False):
   """Performs a MC move inspired by a VAE model with configurational bias based on treating
 the full model P(x) as the arbitrary trial distribution. zDrawFunc should be a class that can
 be called with different styles of draws for z.
@@ -374,10 +377,10 @@ be called with different styles of draws for z.
 
   #Move in the forward direction
   #Draw a z value from P(z|x1)
-  currZ, zLogProbX1 = zDrawLocal(vaeModel, currConfig, nDraws=n_draws)
-  #Because n_draws is great than 1 for config bias, need to do some reshaping
-  #But only for inputs, not log probabilities
-  currZ = tf.reshape(currZ, (-1, currZ.shape[-1]))
+  #Do for just a single z for now, since other x generated in reverse will also have z
+  currZ, zLogProbX1 = zDrawLocal(vaeModel, currConfig, nDraws=1)
+  currZ = tf.squeeze(currZ, axis=0)
+  zLogProbX1 = np.squeeze(zLogProbX1, axis=0)
   #Draw a new z value according to chosen distribution
   newZ, z2LogProb = zDrawFunc(draw_type=zDrawType, nDraws=n_draws,
                               batch_size=n_batch)
@@ -393,14 +396,14 @@ be called with different styles of draws for z.
   #Exactly retracing steps, so nDraws is 1 because not drawing extra
   #Still shaped so n_draws and batch_size compressed on same axis
   newZ, zLogProbX2 = zDrawLocal(vaeModel, newConfig, zSel=newZ, nDraws=1)
+  #Already have single z value, but want to generate more in reverse
   #Calculate probability of drawing currZ from chosen distribution
-  currZ, z1LogProb = zDrawFunc(draw_type=zDrawType, zSel=currZ, nDraws=1)
+  currZ, z1LogProb = zDrawFunc(draw_type=zDrawType, zSel=currZ, nDraws=n_draws)
   #Calculate probability of drawing currConfig from currZ
   #Need to handle differently for actual current config and proposed reverse configs
-  #Easiest if just reshape to do that, since reshaping nearly free
-  currZ = tf.reshape(currZ, (n_draws, n_batch, -1))
+  #Current should be first in currZ, since it was zSel, then others are after
   currConfig, logProbX1 = xDrawSimple(vaeModel, currZ[0, ...],
-                                     xSel=currConfig, **samplerParams)
+                                      xSel=currConfig, **samplerParams)
   #No selection here, just draw
   revConfig, revlogProbX1 = xDrawSimple(vaeModel,
                                         tf.reshape(currZ[1:, ...], (-1, currZ.shape[-1])),
@@ -409,6 +412,10 @@ be called with different styles of draws for z.
   revU = energyFunc(revConfig, **energyParams)
   if tf.is_tensor(revU):
     revU = revU.numpy()
+  #And finally need to compute P(z|x) for all newly generated reverse configurations
+  revCurrZ, revzLogProbX1 = zDrawLocal(vaeModel, revConfig,
+                                       zSel=tf.reshape(currZ[1:, ...], (-1, currZ.shape[-1])),
+                                       nDraws=1)
 
   #Now reshape all energies and log probabilities so n_draws is on first axis
   #And will put together reverse energies and log probs
@@ -416,6 +423,8 @@ be called with different styles of draws for z.
   revU = np.concatenate([currU[np.newaxis, :], revU])
   revlogProbX1 = np.reshape(revlogProbX1, (n_draws-1, n_batch))
   revlogProbX1 = np.concatenate([logProbX1[np.newaxis, ...], revlogProbX1])
+  revzLogProbX1 = np.reshape(revzLogProbX1, (n_draws-1, n_batch))
+  revzLogProbX1 = np.concatenate([zLogProbX1[np.newaxis, ...], revzLogProbX1])
   newU = np.reshape(newU, (n_draws, n_batch))
   logProbX2 = np.reshape(logProbX2, (n_draws, n_batch))
   zLogProbX2 = np.reshape(zLogProbX2, (n_draws, n_batch))
@@ -430,14 +439,14 @@ be called with different styles of draws for z.
                                             sel_ind[np.newaxis, :, np.newaxis], axis=0),
                          axis=0)
   newU = np.squeeze(np.take_along_axis(newU,
-                                       sel_ind[np.newaxis, :]),
+                                       sel_ind[np.newaxis, :], axis=0),
                     axis=0)
   #And sum config bias log weights to get Rosenbluth weight
   max_log_cb_for = np.max(log_cb_for, axis=0)
   w_for = max_log_cb_for + np.sum(np.exp(log_cb_for - max_log_cb_for), axis=0)
 
   #In reverse, just need to sum to get Rosenbluth weight, W
-  log_cb_rev = -B*revU - revlogProbX1 - z1LogProb + zLogProbX1
+  log_cb_rev = -B*revU - revlogProbX1 - z1LogProb + revzLogProbX1
   max_log_cb_rev = np.max(log_cb_rev, axis=0)
   w_rev = max_log_cb_rev + np.sum(np.exp(log_cb_rev - max_log_cb_rev), axis=0)
 
