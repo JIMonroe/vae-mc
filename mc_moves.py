@@ -517,7 +517,7 @@ def moveGauss(currConfig, currU, B, energyFunc, energyParams={}, noise=0.02):
   """General purpose MC move that simply adds normally-distributed noise to an input
 configuration. The amount of noise can be modified by setting the noise input.
   """
-  norm_sample = noise*np.random.normal(size=currConfig.shape)
+  norm_sample = noise*np.random.normal(size=currConfig.shape).astype(currConfig.dtype)
   newConfig = currConfig + norm_sample
   newU = energyFunc(newConfig, **energyParams)
   if tf.is_tensor(newU):

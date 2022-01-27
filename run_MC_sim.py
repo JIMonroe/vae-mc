@@ -96,6 +96,8 @@ elif system_type == 'dimer':
   #                          e_hidden_dim=300,
   #                          d_hidden_dim=300)
 
+  #Always treat first data file as the training data
+  #Must supply this so use shift and scale that VAE is expecting
   trajdict = np.load(dat_files[0], allow_pickle=True)
   data = np.vstack([trajdict['traj_open_hungarian'], trajdict['traj_closed_hungarian']])
   if 'centerwhite' in weights_file:
@@ -107,6 +109,14 @@ elif system_type == 'dimer':
     scale = np.std(data, axis=0, ddof=1)
   else:
     scale = 1.0
+  data /= scale
+
+  #If have other data files, load those instead, treating as trajectories saved with this code
+  #So expect just a saved numpy array in original coordinates without transformation
+  if len(dat_files) > 1:
+    data = np.vstack([np.load(f) for f in dat_files[1:]]).astype('float32')
+    print(data.shape)
+  data -= shift
   data /= scale
 
   def transform(x, for_traj=False):
@@ -294,18 +304,18 @@ if tf.is_tensor(curr_U):
   curr_U = curr_U.numpy()
 
 #Allow for multiple types of MC moves
-move_types = [mc_moves.moveVAE, #mc_moves.moveVAEbiased
-              mc_moves_LG.moveTranslate,
+move_types = [mc_moves.moveVAE_cb, #mc_moves.moveVAEbiased
+              mc_moves.moveGauss, #mc_moves_LG.moveTranslate,
               mc_moves_LG.moveDeleteMulti,
               mc_moves_LG.moveInsertMulti]
-move_probs = [0.05, 0.475, 0.2375, 0.2375] #[1.0, 0.0, 0.0, 0.0]
+move_probs = [1.0, 0.0, 0.0, 0.0] #[0.1, 0.9, 0.0, 0.0] #[0.05, 0.475, 0.2375, 0.2375]
 
 #Set up statistics
 num_steps = 100000
 move_counts = np.zeros((num_parallel, len(move_types)))
 num_acc = np.zeros((num_parallel, len(move_types)))
 if move_probs[0] > 0.0:
-  mc_stats = np.zeros((num_parallel, num_steps, 8)) #8 if unbiased, 10 if biased, 3 if cb
+  mc_stats = np.zeros((num_parallel, num_steps, 3)) #8 if unbiased, 10 if biased, 3 if cb
 U_traj = np.zeros((num_parallel, num_steps+1))
 U_traj[:, 0] = curr_U
 
@@ -336,7 +346,8 @@ for i in range(num_steps):
                                   zDrawType='std_normal', verbose=True)
         mc_stats[:, i, :] = np.array(move_info[-1]).T
     else:
-        move_info = move_types[m](curr_config, curr_U, beta)
+        move_info = move_types[m](curr_config, curr_U, beta,
+                                  energy_func, energyParams=energy_params)
         mc_stats[:, i, 0] = np.array(move_info[0])
     rand_logP = np.log(np.random.random(num_parallel))
     to_acc = (move_info[0]  > rand_logP)
