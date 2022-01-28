@@ -365,24 +365,24 @@ def latent_linear_independence(z_sample):
     Inputs:
             z_sample - sample in latent space
     Outputs:
-            cov_mat - covariance matrix
-            eigvecs - eigenvectors of covariance matrix (so principal components)
-            eigvals - eigenvalues of covariance matrix
+            corr_mat - correlation matrix (covariance matrix of centered and whitened data)
+            eigvecs - eigenvectors of correlation matrix (so principal components)
+            eigvals - eigenvalues of correlation matrix
             var_explained - variance explained by each eigenvalue
+            raw_cov_mat - covariance matrix of raw data
             gauss_tot_corr - Gaussian approximation to total correlation of latent space (used by Locatello, et al. 2019)
     """
 
     #First put dimensions on equal footing in terms of scale and range (get average and std)
     avg_z = tf.reduce_mean(z_sample, axis=0)
-    std_z = (tf.math.reduce_std(z_sample, axis=0)
-             *tf.cast(tf.shape(z_sample)[0] / (tf.shape(z_sample)[0] - 1), z_sample.dtype)) #Note divides by N, not N-1
+    std_z = tf.math.reduce_std(z_sample, axis=0) #Note divides by N, not N-1, but tfp.stats.covariance does same
 
     #Wrap numpy for covariance matrix for latent space sample
-    cov_mat = tfp.stats.covariance((z_sample - avg_z) / std_z)
+    corr_mat = tfp.stats.covariance((z_sample - avg_z) / std_z)
 
     #Could just look at structure of covariance matrix
     #But for more info, look at principal components
-    eigvals, eigvecs = tf.linalg.eigh(cov_mat)
+    eigvals, eigvecs = tf.linalg.eigh(corr_mat)
 
     #Explained variance for PCs
     var_explained = eigvals / tf.reduce_sum(eigvals)
@@ -393,7 +393,7 @@ def latent_linear_independence(z_sample):
     #Which simplifies to just Sum(0.5*ln(sigma_i^2)) - 0.5*ln(det(Sigma))
     gauss_tot_corr = tf.reduce_sum(tf.math.log(std_z)) - 0.5*tf.linalg.logdet(raw_cov_mat)
 
-    return cov_mat, eigvecs, eigvals, var_explained, gauss_tot_corr
+    return corr_mat, eigvecs, eigvals, var_explained, raw_cov_mat, gauss_tot_corr
 
 
 def total_corr_TCVAE(z_samples, z_means, z_logvars):
@@ -424,65 +424,83 @@ def total_corr_TCVAE(z_samples, z_means, z_logvars):
     return tf.reduce_mean(log_qz - log_qz_product)
 
 
-def latent_info_content(z_sample, tz_sample, log_det_rev, std_norm_sample, t_std_norm_sample, log_det_std_norm):
+def latent_info_content(z_sample, tz_sample, log_det_rev, norm_sample, t_norm_sample, log_det_norm):
 
     """
+    A good estimate of the "complexity" that a VAE model builds into the latent space is the
+    KL divergence to a normal distribution with the SAME MEAN as the latent distribution q(z).
+    As far as VAE is concerned, any normal with variance of 1 is equally good in terms of the
+    KL loss term because the flow pays no penalty for a shift (log determinant of Jacobian
+    transform will be zero).
+
     If have trained flow, can compute two estimates of relative entropy, one in each direction.
-    If sample in standard normal, P(z'), approximate Srel as
+    In what follows, z will be the space of q(z) while z' will be in the space transformed by
+    the flow that results in q(z'), i.e., finv(z) = z'. If the flow is well-trained,
+    q(z') = N(z' ; 0,1) = SN, a standard normal. If sample in normal with same mean but unit
+    variance, P(z) = N(z; mean(q(z)), 1), approximate Srel as
 
-    -S_sn - <ln[sn(finv(z'))*J(z')]>_sn
+    KL_for = -S_n - <ln[SN(finv(z))*J(z)]>_n
 
-    where z' is drawn from the standard normal, S_sn is the entropy of the standard normal, finv()
-    is the inverse flow transformation, but acts on z', and J(z') is the associated log determinant.
-    This assumes q(z) can be well-approximated by P(z')J(z'). Alternatively, can sample empirical
+    where z is drawn from the standard normal, S_n is the entropy of the normal with same mean,
+    finv() is the inverse flow transformation, and J(z) is the associated log determinant.
+    This assumes q(z) can be well-approximated by SN(z')J(z). Alternatively, can sample empirical
     distribution q(z). In this case, have a number of options, but will take
 
-    <ln[sn(finv(z))]>_q(z) + <lnJ(z)>_q(z) - <ln[sn(z)]>_q(z)
+    KL_rev = <ln[SN(finv(z))]>_q(z) + <lnJ(z)>_q(z) - <ln[P(z)]>_q(z)
 
-    This assumes that q(z') is approximately P(z'), which is true for a well-trained flow. Note that
-    the first average is the log-probability of the standard normal averaged over the transformed
-    version of z, and the second is over the untransformed. Computing in two directions may or may not
-    be helpful, which is why both KL divergences and the Jeffreys divergence are returned. Even if
-    the flow is well-learned, there is no reason for the two KL divergences to be similar since this
-    is intrinsically a non-symmetric metric. However, using relative entropy versus entropy is
-    preferred - first, we get estimates in two directions and second, KL is bounded by zero, so if
-    zero it means no additional info than standard normal. This should be caveated, however, with the
-    fact that a meaningful latent space could still exist but be in the shape of standard normal.
-    If the latent distribution is more convoluted than standard normal, however, we are definitely
-    encoding more information. So more precisely this assesses the non-standard-normal-ness of q(z).
-    If have similarity to standard normal AND latent dimensions are all unused, then no info encoded.
-    Still returning estimate of entropy of q(z), because compute it to get KL_rev.
+    This again assumes that q(z') is approximately SN(z'), which is true for a well-trained flow.
+    Note that the first average is the log-probability of the standard normal averaged over the
+    transformed version of z, and the second is over the untransformed with the probability being
+    P(z), the normal distribution with unit variance but the same mean as q(z). The first two
+    terms in the above are, when combined, are an upper-bound estimate on the entropy of q(z), S_q.
+
+    Computing in two directions may or may not be helpful, which is why both KL divergences and
+    the Jeffreys divergence are returned. Even if the flow is well-learned, there is no reason
+    for the two KL divergences to be similar since this is intrinsically a non-symmetric metric.
+    However, using relative entropy versus entropy is preferred - first, we get estimates in two
+    directions and second, KL is bounded by zero, so if zero it means no additional info than
+    standard normal. This should be caveated, however, with the fact that a meaningful latent space
+    could still exist but be in the shape of standard normal. If the latent distribution is more
+    convoluted than standard normal, however, we are definitely encoding more information. So more
+    precisely this assesses the non-uni-var-normal-ness of q(z). If have similarity to unit
+    variance normal AND latent dimensions are all unused, then no info encoded. Still returning
+    estimate of entropy of q(z), because compute it to get KL_rev.
 
     Inputs:
             z_sample - sample from q(z)
             tz_sample - transformed sample from z to z' (so finv(z))
             log_det_rev - log determinant of transform from q(z) to q(z')
-            std_norm_sample - sample of z' from standard normal distribution P(z')
-            t_std_norm_sample - tranformation of standard normal sample in REVERSE direction, finv(z')
-            log_det_std_norm - log determinant of transform from standard normal sample
+            norm_sample - sample of z from normal distribution P(z) with same mean as q(z)
+                          but unit variance
+            t_norm_sample - tranformation of normal sample in REVERSE direction, finv(z)
+            log_det_norm - log determinant of transform from normal sample
     Outputs:
             S_q - upper bound estimate of entropy of q(z)
-            KL_rev - KL divergence in "reverse" direction, specifically KL(q(z), sn(z))
-            KL_for - KL divergence in "forward" direction, so KL(sn(z), q(z))
+            KL_rev - KL divergence in "reverse" direction, specifically KL(q(z), P(z))
+            KL_for - KL divergence in "forward" direction, so KL(P(z), q(z))
             JD - Jeffreys divergence 1/2(KLfor + KLrev)
             tot_corr - total correlation KL(q(z), prod(q(zi))), or sum(S_qzi) - S_qz
     """
+
+    #Will need mean of z_sample for probability of P(z), normal with same mean but unit variance
+    avg_z = tf.reduce_mean(z_sample, axis=0)
 
     #Compute upper bound on entropy of q(z)
     S_q = -tf.reduce_mean(tf.reduce_sum(-0.5*tf.square(tz_sample)
                                         - tf.cast(0.5*tf.math.log(2.0*np.pi), tz_sample.dtype), axis=1)
                           + log_det_rev)
     #Since entropy estimate is upper bound and negate it, KL_rev is lower bound
-    KL_rev = -S_q - tf.reduce_mean(tf.reduce_sum(-0.5*tf.square(z_sample)
+    KL_rev = -S_q - tf.reduce_mean(tf.reduce_sum(-0.5*tf.square(z_sample - avg_z)
                                                  - tf.cast(0.5*tf.math.log(2.0*np.pi), z_sample.dtype), axis=1)
                                    ) #Terms involving 2*pi should cancel
-    sn_ent = (0.5*tf.cast(tf.shape(std_norm_sample)[1], t_std_norm_sample.dtype)
-                 *tf.cast(tf.math.log(2.0*np.pi) + 1.0, t_std_norm_sample.dtype)
+    #Entropy of normal with unit variance (mean does not enter into entropy)
+    S_n = (0.5*tf.cast(tf.shape(norm_sample)[1], t_norm_sample.dtype)
+              *tf.cast(tf.math.log(2.0*np.pi) + 1.0, t_norm_sample.dtype)
              )
-    KL_for = (-sn_ent
-              - tf.reduce_mean(tf.reduce_sum(-0.5*tf.square(t_std_norm_sample)
-                                             - tf.cast(0.5*tf.math.log(2.0*np.pi), t_std_norm_sample.dtype), axis=1)
-                               + log_det_std_norm)
+    KL_for = (-S_n
+              - tf.reduce_mean(tf.reduce_sum(-0.5*tf.square(t_norm_sample)
+                                             - tf.cast(0.5*tf.math.log(2.0*np.pi), t_norm_sample.dtype), axis=1)
+                               + log_det_norm)
              )
     JD = 0.5*(KL_rev + KL_for) #Technically, I think Jeffreys Divergence is just the sum, but 1/2 makes sense
     #Can also compute total correlation if compute dimension-wise entropies
@@ -524,10 +542,11 @@ class LatentAnalysis(object):
 
         #Set up dictionary for results, all currently None
         self.result_keys = ['qzx_jd_per_dim',
-                            'qz_cov_mat',
-                            'qz_cov_eigvecs',
-                            'qz_cov_eigvals',
+                            'qz_corr_mat',
+                            'qz_corr_eigvecs',
+                            'qz_corr_eigvals',
                             'qz_var_explained',
+                            'qz_raw_cov_mat',
                             'qz_gauss_tot_corr',
                             'qz_tot_corr_tcvae',
                             'qz_tot_corr',
@@ -574,11 +593,15 @@ class LatentAnalysis(object):
         #Do analyses that require batching (to prevent overflows)
         #But skip if standard autoencoder because requires means and logvars of q(z|x)
         if self.vae_model.sample_latent:
-            batch_size = 500
+            batch_size = 555 #Avoid sample size being multiple of batch_size
             qzx_jd_per_dim = []
             qz_tot_corr_tcvae = []
             num_batch = []
-            for i in range(0, tf.shape(this_z_means)[0], batch_size):
+            #Looping over all samples means utilized_latent_dims may have some repetition
+            #(if number of samples is a multiple of batch_size since z_means and z_logvars tiled)
+            #Better for estimating total_corr_TCVAE, though, and also better for utilized_latent_dims
+            #IF set shifts some each time through tiling
+            for i in range(0, tf.shape(z_sample)[0], batch_size):
                 start = i
                 end = i+batch_size
                 qzx_jd_per_dim.append(utilized_latent_dims(this_z_means[start:end],
@@ -607,25 +630,30 @@ class LatentAnalysis(object):
 
         #And those that don't
         linear_ind_info = latent_linear_independence(z_sample)
-        qz_cov_mat = linear_ind_info[0]
-        qz_cov_eigvecs = linear_ind_info[1]
-        qz_cov_eigvals = linear_ind_info[2]
+        qz_corr_mat = linear_ind_info[0]
+        qz_corr_eigvecs = linear_ind_info[1]
+        qz_corr_eigvals = linear_ind_info[2]
         qz_var_explained = linear_ind_info[3]
-        qz_gauss_tot_corr = linear_ind_info[4]
+        qz_raw_cov_mat = linear_ind_info[4]
+        qz_gauss_tot_corr = linear_ind_info[5]
         #print('Checked linear independence')
 
-        #And extra sampling for information content estimates (for KL divergence in both directions from standard normal)
-        std_norm_sample = self.rng.normal(z_sample.shape)
+        #And extra sampling for information content estimates
+        #(for KL divergence in both directions from unit-variance normal wit same mean as z_sample)
+        norm_sample = self.rng.normal(tf.shape(z_sample),
+                                      mean=tf.reduce_mean(z_sample, axis=0),
+                                      stddev=1.0)
         tz_sample, log_det_rev = self.vae_model.flow(z_sample, reverse=True)
-        t_std_norm_sample, log_det_std_norm = self.vae_model.flow(std_norm_sample, reverse=True)
+        t_norm_sample, log_det_norm = self.vae_model.flow(norm_sample, reverse=True)
         #print('Finished both flows')
         qz_s, kl_rev, kl_for, qz_jd, tot_corr = latent_info_content(z_sample, tz_sample, log_det_rev,
-                                                         std_norm_sample, t_std_norm_sample, log_det_std_norm)
+                                                                    norm_sample, t_norm_sample, log_det_norm)
         #print('Estimated information content with flows')
 
         out_means = (qzx_jd_per_dim_mean,
-                     qz_cov_mat,
-                     qz_cov_eigvecs, qz_cov_eigvals, qz_var_explained,
+                     qz_corr_mat,
+                     qz_corr_eigvecs, qz_corr_eigvals, qz_var_explained,
+                     qz_raw_cov_mat,
                      qz_gauss_tot_corr, qz_tot_corr_tcvae_mean, tot_corr,
                      kl_rev, kl_for, qz_jd, qz_s)
         out_vars = (qzx_jd_per_dim_var, qz_tot_corr_tcvae_var)
