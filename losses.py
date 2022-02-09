@@ -16,6 +16,12 @@ _dimer_params = ParticleDimer.params_default.copy()
 _dimer_params['dimer_slope'] = 2.0
 _dim_model = ParticleDimer(params=_dimer_params)
 
+#Also for Mueller Potential
+from deep_boltzmann.models.mueller_potential import MuellerPotential
+_mueller_params = MuellerPotential.params_default.copy()
+_mueller_params['k'] = 0.1
+_muell_model = MuellerPotential(params=_mueller_params)
+
 #For the polymer and alanine, need openmm for poential energies
 import simtk.unit as unit
 import simtk.openmm as mm
@@ -288,6 +294,78 @@ def wrap_openmm_energy_tf(energy_func):
     return energies, _grad_fn
 
   return energy_with_grads
+
+
+def muellerHamiltonian(conf):
+  """
+  Wrapper around potential energy for Mueller Potential.
+  """
+  u = _muell_model.energy_tf(conf)
+  return u
+
+
+class WBPotential(object):
+    """
+    Defines the Washington Beltway Potential and its potential energies.
+    """
+
+    def __init__(self):
+        self.offset = tf.cast(0.0, 'float32') #Offset between energy wells in radial distance, in kB*T
+        self.mix = tf.cast(1.0 / (1.0 + np.exp(self.offset)), 'float32')
+        self.r_dist = tfp.distributions.Mixture(tfp.distributions.Categorical(probs=[self.mix, 1.0-self.mix]),
+                                               [tfp.distributions.Gamma(tf.cast(40.0, 'float32'), rate=tf.cast(40.0, 'float32')),
+                                                tfp.distributions.Gamma(tf.cast(160.0, 'float32'), rate=tf.cast(80.0, 'float32'))])
+        self.theta_dist = tfp.distributions.Uniform(low=tf.cast(-np.pi, 'float32'), high=tf.cast(np.pi, 'float32'))
+        self.dist = tfp.distributions.JointDistributionSequential([self.r_dist, self.theta_dist])
+
+    def energy_rtheta(self, vals):
+        vals = tf.cast(vals, 'float32')
+        pot = -self.dist.log_prob(tf.unstack(vals, axis=1))
+        return pot
+
+    def energy_xy(self, vals):
+        r = np.sqrt(np.sum(vals**2, axis=-1))
+        theta = np.arctan2(vals[:, 1], vals[:, 0])
+        vals = np.vstack([r, theta]).T
+        vals = tf.cast(vals, 'float32')
+        pot = -self.dist.log_prob(tf.unstack(vals, axis=1))
+        return pot
+
+
+class ToyPotential(object):
+    """
+    Defines potentials for all toy models
+    """
+    @staticmethod
+    def create_dist(f):
+        #f is the probability to be in lower Gaussian peak
+        if isinstance(f, (int, float)) or len(f.shape) == 0:
+            ones_batch=1.0
+        else:
+            f = np.array(f)
+            ones_batch = np.ones((f.shape[0],)).astype('float32')
+        probs = np.array([f, 1.0-f], dtype='float32').T
+        return tfp.distributions.Mixture(cat=tfp.distributions.Categorical(probs=probs),
+                                         components=[tfp.distributions.Normal(loc=-3.0*ones_batch, scale=ones_batch),
+                                                     tfp.distributions.Normal(loc=3.0*ones_batch, scale=ones_batch)])
+
+    def __init__(self, sys_type):
+        if sys_type == 'ind_bi':
+            self.dist = tfp.distributions.JointDistributionSequential([self.create_dist(0.6),
+                                                                       self.create_dist(0.6)])
+        elif sys_type == 'corr_bi':
+            self.dist = tfp.distributions.JointDistributionSequential([self.create_dist(0.6),
+                                                                       lambda x1: self.create_dist(-0.5*(tf.sign(x1)-1))])
+        elif sys_type == 'ind_uni':
+            self.dist = tfp.distributions.JointDistributionSequential([self.create_dist(1.0),
+                                                                       self.create_dist(1.0)])
+        else:
+            raise ValueError('Unrecognized input for sys_type: %s\nSpecified system type must be string of: ind_bi, corr_bi, or ind_uni.'%str(sys_type))
+
+    def energy(self, vals):
+        vals = tf.cast(vals, 'float32')
+        pot = -self.dist.log_prob(tf.unstack(vals, axis=1))
+        return pot
 
 
 def gaussian_sampler(mean, logvar):
