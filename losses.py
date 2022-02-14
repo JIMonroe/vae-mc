@@ -340,11 +340,11 @@ class ToyPotential(object):
     def create_dist(f):
         #f is the probability to be in lower Gaussian peak
         if isinstance(f, (int, float)) or len(f.shape) == 0:
-            ones_batch=1.0
+            ones_batch=tf.constant(1.0)
         else:
-            f = np.array(f)
-            ones_batch = np.ones((f.shape[0],)).astype('float32')
-        probs = np.array([f, 1.0-f], dtype='float32').T
+            f = tf.constant(f)
+            ones_batch = tf.ones((f.shape[0],))
+        probs = tf.stack([f, 1.0-f], axis=-1)
         return tfp.distributions.Mixture(cat=tfp.distributions.Categorical(probs=probs),
                                          components=[tfp.distributions.Normal(loc=-3.0*ones_batch, scale=ones_batch),
                                                      tfp.distributions.Normal(loc=3.0*ones_batch, scale=ones_batch)])
