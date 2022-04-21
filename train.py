@@ -144,7 +144,8 @@ def trainCustom(model,
                 overwrite=False,
                 extraLossFunc=None,
                 extraLossWeight=1.0,
-                anneal_beta_val=None):
+                anneal_beta_val=None
+                use_extra_data_info=False):
   """Trains a VAE model and saves the results in a way that the model can be fully reloaded.
 Uses a custom training loop rather than those built into the tf.keras.Model class.
 
@@ -159,6 +160,9 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
     extraLossFunc: Additional loss function to add (for example potential energies)
     extraLossWeight: Weighting factor for the extra loss function
     anneal_beta_val: Final value for beta (changes with each epoch, starts with what model is at)
+    use_extra_data_info: If True, will treat target/label, or the second index of each piece
+                         of data, as extra information to pass to the model. Can use to
+                         provide temperatures or other extra inputs.
   """
 
   # #Set up logging of debug info
@@ -268,7 +272,10 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
       for ametric in model.metrics:
         ametric.reset_states()
       with tf.GradientTape() as tape:
-        reconstructed = model(x_batch_train[0], training=True)
+        if use_extra_data_info:
+          reconstructed = model(x_batch_train[0], training=True, extra_info=x_batch_train[1])
+        else:
+          reconstructed = model(x_batch_train[0], training=True)
         loss = loss_fn(x_batch_train[0], reconstructed) / x_batch_train[0].shape[0]
 
         #Catchin' NaNs
@@ -322,7 +329,11 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
       ametric.reset_states()
     batchCount = 0.0
     for x_batch_val in valData:
-      reconstructed = model(x_batch_val[0], training=True)
+      if use_extra_data_info:
+        reconstructed = model(x_batch_val[0], training=True, extra_info=x_batch_val[1])
+      else:
+        reconstructed = model(x_batch_val[0], training=True)
+
       val_loss += loss_fn(x_batch_val[0], reconstructed) / x_batch_val[0].shape[0]
       val_loss += sum(model.losses)
       if extraLossFunc is not None:

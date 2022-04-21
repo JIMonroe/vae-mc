@@ -378,7 +378,7 @@ their paper 'Variational Lossy Autoencoder.'
     #For basic VAE, beta = 1.0, but want ability to change it
     return self.beta * kl_loss
 
-  def call(self, inputs, training=False):
+  def call(self, inputs, training=False, extra_info=None):
     z_mean, z_logvar = self.encoder(inputs)
     #To allow regular autoencoder, can set sample_latent to False
     if self.sample_latent:
@@ -400,7 +400,13 @@ their paper 'Variational Lossy Autoencoder.'
       #This works with current style of VAE (beta-VAE), but if switch, may not
       z_prior, logdet = self.flow(z, reverse=True)
       #Estimate the KL divergence - should return average KL over batch
-      kl_loss = losses.estimate_gaussian_kl(z_prior, z, z_mean, z_logvar)
+      #If have extra_info, treat as adjustment to the transformed prior's variance
+      #Should be specific to each sample to indicate different temperatures, say
+      if extra_info is not None:
+        kl_loss = losses.estimate_gaussian_kl(z_prior, z, z_mean, z_logvar,
+                                              prior_stds=extra_info)
+      else:
+        kl_loss = losses.estimate_gaussian_kl(z_prior, z, z_mean, z_logvar)
       #And SUBTRACT the average log determinant for the flow transformation
       kl_loss -= tf.reduce_mean(logdet)
     else:

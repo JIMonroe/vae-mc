@@ -126,17 +126,24 @@ def compute_gaussian_kl(z_mean, z_logvar):
   return tf.reduce_mean(per_sample_kl)
 
 
-def estimate_gaussian_kl(tz, z, z_mean, z_logvar):
+def estimate_gaussian_kl(tz, z, z_mean, z_logvar, prior_stds=None):
   """Estimates KL divergence by taking average over batch for latent space with a
 normalizing flow. tz is the transformed coordinate, z the original, and z_mean and
 z_logvar the mean and log variance of the original z. Will assume that the underlying
-model for tz in the VAE framework is standard normal.
+model for tz in the VAE framework is standard normal. Unless prior_stds are specified,
+in which case the std of tz is specified for each sampled, allowing for explicitly
+introducing temperature dependence into training.
   """
+  if prior_stds is not None:
+    prior_stds = tf.tile(tf.reshape(prior_stds, (tz.shape[0], 1)), (1, tz.shape[1]))
+  else:
+    prior_stds = tf.ones_like(tz)
   logp_z = -0.5*tf.reduce_sum(tf.square(z - z_mean)*tf.exp(-z_logvar)
                               + z_logvar,
                               #+ tf.math.log(2.0*np.pi),
                               axis=1)
-  logp_tz = -0.5*tf.reduce_sum(tf.square(tz),
+  logp_tz = -0.5*tf.reduce_sum(tf.square(tz / prior_stds)
+                               + 2.0*tf.math.log(prior_stds),
                                #+ tf.math.log(2.0*np.pi),
                                axis=1)
   return tf.reduce_mean(logp_z - logp_tz)
