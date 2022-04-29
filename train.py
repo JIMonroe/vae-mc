@@ -144,7 +144,7 @@ def trainCustom(model,
                 overwrite=False,
                 extraLossFunc=None,
                 extraLossWeight=1.0,
-                anneal_beta_val=None
+                anneal_beta_val=None,
                 use_extra_data_info=False):
   """Trains a VAE model and saves the results in a way that the model can be fully reloaded.
 Uses a custom training loop rather than those built into the tf.keras.Model class.

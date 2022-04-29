@@ -71,7 +71,13 @@ Reference beta is hard-coded, so watch out!
   perm = np.random.permutation(images.shape[0])
   images = images[perm, ...]
   if file_betas is not None:
-    betas = ref_beta / betas[perm] #Divide ref_beta by betas so T/T0, so higher T has more std
+    #betas = ref_beta / betas[perm] #Divide ref_beta by betas so T/T0, so higher T has more std
+    betas = np.exp(6.0*((betas[perm] / ref_beta) - 1.0)) #Need more drastic changes in std
+    #BUT, for lattice gas, latent space has high temperatures in middle of distribution
+    #So with broader P(z') for higher T, need transformation of z' ~ 1/z
+    #Unfortunately, RQS is monotonically increasing transformation over transformed interval
+    #So can never learn flow to map high T to higher std of P(z')
+    #But can go the other way, though it's based on prior knowledge of learned encoding
     return images, betas
   else:
     return images

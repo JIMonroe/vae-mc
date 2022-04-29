@@ -88,13 +88,13 @@ if system_type == 'lg':
 #If do add other systems, must set up energy functions for them as well!
 elif system_type == 'dimer':
   print("Setting up VAE for 2D particle dimer with latent dimension %i"%latent_dim)
-  vaeModel = vae.PriorFlowVAE((76,), latent_dim, autoregress=True,
-                              include_vars=True, n_auto_group=2,
-                              e_hidden_dim=300,
-                              d_hidden_dim=300)
-  #vaeModel = vae.FullFlowVAE((76,), latent_dim, n_auto_group=2,
-  #                          e_hidden_dim=300,
-  #                          d_hidden_dim=300)
+  #vaeModel = vae.PriorFlowVAE((76,), latent_dim, autoregress=True,
+  #                            include_vars=True, n_auto_group=2,
+  #                            e_hidden_dim=300,
+  #                            d_hidden_dim=300)
+  vaeModel = vae.FullFlowVAE((76,), latent_dim, n_auto_group=2,
+                            e_hidden_dim=300,
+                            d_hidden_dim=300)
 
   #Always treat first data file as the training data
   #Must supply this so use shift and scale that VAE is expecting
@@ -116,8 +116,8 @@ elif system_type == 'dimer':
   if len(dat_files) > 1:
     data = np.vstack([np.load(f) for f in dat_files[1:]]).astype('float32')
     print(data.shape)
-  data -= shift
-  data /= scale
+    data -= shift
+    data /= scale
 
   def transform(x, for_traj=False):
     return (x*scale + shift)
@@ -206,15 +206,15 @@ elif 'poly' in system_type:
   print("Setting up VAE for polymer with latent dimension %i"%latent_dim)
   periodic_inds = list(range(-17, 0))
   if 'periodic' in weights_file:
-    vaeModel = vae.PriorFlowVAE((35,), latent_dim, autoregress=True,
-                                include_vars=True, n_auto_group=1,
-                                periodic_dof_inds=periodic_inds,
-                                e_hidden_dim=300,
-                                d_hidden_dim=300)
-    #vaeModel = vae.FullFlowVAE((35,), latent_dim, n_auto_group=1,
-    #                           periodic_dof_inds=periodic_inds,
-    #                           e_hidden_dim=300,
-    #                           d_hidden_dim=300)
+    #vaeModel = vae.PriorFlowVAE((35,), latent_dim, autoregress=True,
+    #                            include_vars=True, n_auto_group=1,
+    #                            periodic_dof_inds=periodic_inds,
+    #                            e_hidden_dim=300,
+    #                            d_hidden_dim=300)
+    vaeModel = vae.FullFlowVAE((35,), latent_dim, n_auto_group=1,
+                               periodic_dof_inds=periodic_inds,
+                               e_hidden_dim=300,
+                               d_hidden_dim=300)
   elif 'sincos' in weights_file:
     vaeModel = vae.PriorFlowVAE((52,), latent_dim, autoregress=True,
                                 include_vars=True, n_auto_group=1,
