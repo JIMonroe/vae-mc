@@ -1,11 +1,32 @@
-Code developed 2020-2021 by Jacob I. Monroe, NIST Employee
-
-This software was developed by employees of the National Institute of Standards and Technology (NIST), an agency of the Federal Government and is being made available as a public service. Pursuant to title 17 United States Code Section 105, works of NIST employees are not subject to copyright protection in the United States.  This software may be subject to foreign copyright.  Permission in the United States and in foreign countries, to the extent that NIST may hold copyright, to use, copy, modify, create derivative works, and distribute this software and its documentation without fee is hereby granted on a non-exclusive basis, provided that this notice and disclaimer of warranty appears in all copies.
-
-THE SOFTWARE IS PROVIDED 'AS IS' WITHOUT ANY WARRANTY OF ANY KIND, EITHER EXPRESSED, IMPLIED, OR STATUTORY, INCLUDING, BUT NOT LIMITED TO, ANY WARRANTY THAT THE SOFTWARE WILL CONFORM TO SPECIFICATIONS, ANY IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND FREEDOM FROM INFRINGEMENT, AND ANY WARRANTY THAT THE DOCUMENTATION WILL CONFORM TO THE SOFTWARE, OR ANY WARRANTY THAT THE SOFTWARE WILL BE ERROR FREE.  IN NO EVENT SHALL NIST BE LIABLE FOR ANY DAMAGES, INCLUDING, BUT NOT LIMITED TO, DIRECT, INDIRECT, SPECIAL OR CONSEQUENTIAL DAMAGES, ARISING OUT OF, RESULTING FROM, OR IN ANY WAY CONNECTED WITH THIS SOFTWARE, WHETHER OR NOT BASED UPON WARRANTY, CONTRACT, TORT, OR OTHERWISE, WHETHER OR NOT INJURY WAS SUSTAINED BY PERSONS OR PROPERTY OR OTHERWISE, AND WHETHER OR NOT LOSS WAS SUSTAINED FROM, OR AROSE OUT OF THE RESULTS OF, OR USE OF, THE SOFTWARE OR SERVICES PROVIDED HEREUNDER.
-
+# VAE Library for Molecular Simulation
 
 A library of tensorflow 2.0 code to support VAEs for molecular systems.
-Adapted from disentanglement_lib https://github.com/google-research/disentanglement_lib
+The original code used disentanglement_lib (https://github.com/google-research/disentanglement_lib) as a jumping off point for organization and basic structure of models.
+While much of that code remains, the majority of the code here is newly implemented VAE models adding on features like autoregressive decoders, and normalizing flows that can be applied to both the prior and the decoding distribution.
+These developments are helpful in working with molecular systems, where enhanced latent space complexity based on a learned prior is helpful, and increased modeling power in terms of capturing correlations between continuous degrees of freedom is often necessary in the decoder.
 
+This code was utilized in the following publications:
+
+Monroe, J. I.; Shen, V. K. Learning Efficient, Collective Monte Carlo Moves with Variational Autoencoders. J. Chem. Theory Comput. 2022, 18 (6), 3622-3636. https://pubs.acs.org/doi/10.1021/acs.jctc.2c00110
+
+Monroe, J. I.; Shen, V. K. Systematic Control of Collective Variables Learned from Variational Autoencoders. J. Chem. Phys. In review.
+
+If you find this code useful plesae consider citing those works as appropriate.
+
+
+## Dependencies and Installation
+
+See environment.yml for necessary dependencies, as well as the historic_environment.yml for a full conda environment with specific package versions used at the time when this code was used for publications.
+To install, simply pull this repository and within the libVAE directory run `conda env create --file environment.yml`.
+To switch to this environment once it's installed, run `conda active machinelearning`.
+Note that you will also need to make sure that the libVAE directory is in your path and python path.
+This can be accomplished by appending the path to your `PATH` and `PYTHONPATH` environment variables.
+
+Note that specific systems (the 2D fluid with a dimer and the Mueller potential) require installation of the deep-boltzmann package: http://doi.org/10.5281/zenodo.3242635
+Once the files for that package are pulled, it may be installed into the conda environment crated with the provided environment.yml file by running `pip install` in the directory containing setup.py for the deep-boltzmann package.
+
+
+## Contact
+
+Please feel free to interact with Jacob Monroe (JIMonroe) through github, or send an email to jacob.monroe@nist.gov.
 

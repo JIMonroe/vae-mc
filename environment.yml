@@ -18,8 +18,5 @@ dependencies:
   - pip:
       - tensorflow
       - tensorflow-probability
-# prefix: /Users/jim2/bin/miniforge3/envs/machinelearning
-#After done, need to install development mdanalysis (2.0) and Frank Noe's deep_boltzmann
-#Find directories in bin and run `pip install -e .` where there is a setup.py present
-#For mdanalysis to work right, need to first run `conda remove --force mdanalysis`
-#That way you get all the right dependencies in conda but the development version in pip
+#After done, need to install Frank Noe's deep_boltzmann package
+#Find directory where pulled and run `pip install -e .` where there is a setup.py present
