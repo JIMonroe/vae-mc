@@ -1,3 +1,5 @@
+# Written by Jacob I. Monroe, NIST Employee
+
 """MC moves specific to the lattice gas and designed to efficiently run simulations
 in parallel on GPUs with tensorflow
 """

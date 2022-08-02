@@ -1,3 +1,4 @@
+# Written by Jacob I. Monroe, NIST Employee
 
 import numpy as np
 import tensorflow as tf

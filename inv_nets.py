@@ -1,4 +1,7 @@
 # Code for invertible mappings
+# Implemented to learn about and reproduce Boltzmann Generators paper
+# However, none of this code for flows was used in publications
+# Other flow code may be found in architectures.py
 
 import os
 import time

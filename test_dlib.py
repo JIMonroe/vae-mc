@@ -1,3 +1,4 @@
+# Old set of tests - does not check all of code, especially most current
 
 import numpy as np
 import tensorflow as tf

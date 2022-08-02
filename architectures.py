@@ -1,4 +1,4 @@
-# Written in 2020 by Jacob I. Monroe, NIST Employee
+# Written by Jacob I. Monroe, NIST Employee
 
 """Library of neural network architectures used for constructing VAEs
 Adapted from disentanglement_lib https://github.com/google-research/disentanglement_lib"""

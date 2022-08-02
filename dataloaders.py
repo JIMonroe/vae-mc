@@ -1,4 +1,4 @@
-# Written in 2020 by Jacob I. Monroe, NIST Employee
+# Written by Jacob I. Monroe, NIST Employee
 
 """Defines methods to load data for training VAE models."""
 

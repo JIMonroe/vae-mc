@@ -1,3 +1,4 @@
+# Written by Jacob I. Monroe, NIST Employee
 
 import sys, os
 import gc

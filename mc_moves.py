@@ -1,3 +1,4 @@
+# Written by Jacob I. Monroe, NIST Employee
 
 """Defines Monte Carlo moves for VAEs and invertible networks.
 Useful for testing MC efficiency without actually running MC simulations.

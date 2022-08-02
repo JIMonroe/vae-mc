@@ -1,4 +1,4 @@
-# Written in 2020 by Jacob I. Monroe, NIST Employee
+# Written by Jacob I. Monroe, NIST Employee
 
 """Functions for training a VAE model, including compiling models.
 """
@@ -278,7 +278,7 @@ Uses a custom training loop rather than those built into the tf.keras.Model clas
           reconstructed = model(x_batch_train[0], training=True)
         loss = loss_fn(x_batch_train[0], reconstructed) / x_batch_train[0].shape[0]
 
-        #Catchin' NaNs
+        #Catching NaNs
         #try:
         #  tf.debugging.assert_all_finite(reconstructed, 'Reconstruction not ok.')
         #except tf.errors.InvalidArgumentError as e:

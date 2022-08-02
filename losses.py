@@ -1,4 +1,4 @@
-# Written in 2020 by Jacob I. Monroe, NIST Employee
+# Written by Jacob I. Monroe, NIST Employee
 
 """Library of loss functions for VAEs, including energies for physical systems.
 Can also use these functions as metrics in keras models.

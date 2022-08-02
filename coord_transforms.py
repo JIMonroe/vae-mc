@@ -1,4 +1,4 @@
-#Written by Jacob Monroe, NIST Employee
+# Written by Jacob I. Monroe, NIST Employee
 
 """
 Set of functions for performing coordinate transformations on molecules.

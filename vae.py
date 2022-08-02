@@ -1,4 +1,4 @@
-# Written in 2020 by Jacob I. Monroe, NIST Employee
+# Written by Jacob I. Monroe, NIST Employee
 
 """
 Implementation of VAE based models
@@ -393,9 +393,6 @@ their paper 'Variational Lossy Autoencoder.'
     #Note that if include_vars is True reconstructed will be a tuple of (means, log_vars)
     #Before estimating KL divergence, pass z through inverse flow
     #(forward flow is used during generation from a standard normal)
-    #May not actually need to do this DURING training... may be able to do after - will check
-    #If do after, MUST do really well before actually using model in MC simulations
-    #Feels weird, though, because if don't do, completely leave off KL term...
     if self.beta != 0.0:
       #This works with current style of VAE (beta-VAE), but if switch, may not
       z_prior, logdet = self.flow(z, reverse=True)
