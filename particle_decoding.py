@@ -861,8 +861,6 @@ class PriorFlowSolventVAE(tf.keras.Model):
     #In this model, no KL divergence, but still want to maximize likelihood of P(z)
     #Here we define P(z) as a flow over a standard normal prior
     #So pass z through reverse flow to estimate likelihood
-    #Should be able to do this AFTER training if like, but testing that idea out
-    #If do after, MUST do really well before actually using model in MC simulations
     if self.beta != 0.0:
       #If regularization is zero, save time on the calculation
       z_prior, logdet = self.flow(z, reverse=True)
