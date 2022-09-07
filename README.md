@@ -9,7 +9,7 @@ This code was utilized in the following publications:
 
 Monroe, J. I.; Shen, V. K. Learning Efficient, Collective Monte Carlo Moves with Variational Autoencoders. J. Chem. Theory Comput. 2022, 18 (6), 3622-3636. https://pubs.acs.org/doi/10.1021/acs.jctc.2c00110
 
-Monroe, J. I.; Shen, V. K. Systematic Control of Collective Variables Learned from Variational Autoencoders. J. Chem. Phys. In review.
+Monroe, J. I.; Shen, V. K. Systematic Control of Collective Variables Learned from Variational Autoencoders. J. Chem. Phys. 2022, 157, 094116. https://aip.scitation.org/doi/10.1063/5.0105120
 
 If you find this code useful please consider citing those works as appropriate.
 
